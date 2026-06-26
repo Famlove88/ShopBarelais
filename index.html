@@ -993,9 +993,12 @@ function revExp(db) {
 }
 function serviceBalance(db, svc) {
     const r = { sellL: 0, sellU: 0, buyL: 0, buyU: 0 };
-    db.other.filter((o) => o.svc === svc && !o.item).forEach((o) => {
+    const so = (db.services || []).find((x) => x.name === svc) || {};
+    const itemBuy = (nm) => { const it = (so.items || []).find((i) => i.name === nm); return it ? N(it.buy) : 0; };
+    /* remaining float = loaded credit + item buys(cost) − sold credit − item sells(cost). selling a card draws down the float */
+    db.other.filter((o) => o.svc === svc).forEach((o) => {
         const u = o.curr === 'USD';
-        const t = N(o.amount);
+        const t = o.item ? (o.cost != null ? N(o.cost) : (N(o.qty) * itemBuy(o.item) || N(o.amount))) : N(o.amount);
         if (o.kind === 'sell') {
             if (u)
                 r.sellU += t;
@@ -1009,7 +1012,6 @@ function serviceBalance(db, svc) {
                 r.buyL += t;
         }
     });
-    /* remaining credit = bought (loaded) − sold */
     const _op = (db.opening && db.opening.services && db.opening.services[svc]) || {};
     return { ...r, balL: r.buyL - r.sellL + N(_op.l), balU: r.buyU - r.sellU + N(_op.u) };
 }
@@ -2254,7 +2256,7 @@ function ServicePage({ svc }) {
             return ui.toast('حط الكمية');
         ui.confirm({ title: 'تأكيد حركة صنف — ' + svc, desc: (ikind === 'sell' ? 'بيع ' : 'شراء ') + sel.name + ':',
             lines: [['الصنف', sel.name], ['النوع', ikind === 'sell' ? 'بيع' : 'شراء'], ['الكمية', String(N(iqty))], ['السعر', mc(icurr, iprice)], ['الإجمالي', mc(icurr, itotal)], ['تأثير الصندوق', (ikind === 'sell' ? '+ ' : '− ') + mc(icurr, itotal)]],
-            onOk: () => { db.other.unshift({ id: uid(), ts: now(), svc, kind: ikind, item: sel.name, qty: N(iqty), price: N(iprice), curr: icurr, total: N(itotal), amount: N(itotal), date: todayISO() }); logAudit('إضافة', 'خدمة ' + svc + ' · ' + sel.name + ' ×' + N(iqty)); saveDB(); setIqty('1'); ui.toast('انحفظ ✓'); } });
+            onOk: () => { db.other.unshift({ id: uid(), ts: now(), svc, kind: ikind, item: sel.name, qty: N(iqty), price: N(iprice), curr: icurr, total: N(itotal), amount: N(itotal), cost: N(iqty) * N(sel.buy), date: todayISO() }); logAudit('إضافة', 'خدمة ' + svc + ' · ' + sel.name + ' ×' + N(iqty)); saveDB(); setIqty('1'); ui.toast('انحفظ ✓'); } });
     };
     // ---- item management ----
     const [nm, setNm] = useState(''), [buy, setBuy] = useState(''), [sell, setSell] = useState(''), [img, setImg] = useState(''), [mcur, setMcur] = useState('LBP');
@@ -3701,9 +3703,9 @@ function BoxReport() {
     const supB = supBalances(db);
     const supPayL = (db.supPayments || []).reduce((s, x) => s + N(x.lbp), 0), supPayU = (db.supPayments || []).reduce((s, x) => s + N(x.usd), 0);
     const payblL = supB.rows.reduce((s, r) => s + Math.max(0, r.balL), 0), payblU = supB.rows.reduce((s, r) => s + Math.max(0, r.balU), 0);
-    const svcProfit = totalServiceProfit(db), svcStock = totalServiceStockVal(db), svcCred = totalServiceCredit(db);
+    const svcProfit = totalServiceProfit(db), svcCred = totalServiceCredit(db);
     const tProfit = acc.T.profit + mob.T.profit + rec.T.profit + svcProfit + re.netL;
-    const stockVal = acc.T.stockVal + mob.T.stockVal + rec.T.stockVal + svcStock + N(db.opening.stockL);
+    const stockVal = acc.T.stockVal + mob.T.stockVal + rec.T.stockVal + N(db.opening.stockL);
     const cashL = N(db.opening.cashL) + (acc.T.saleL + mob.T.saleL + rec.T.saleL) - (acc.T.costL + mob.T.costL + rec.T.costL) + cust.rows.reduce((s, c) => s + (c.payL - c.debtL), 0) + re.netL + omt.lbp + sc.l - supPayL;
     const cashU = N(db.opening.cashU) + cust.rows.reduce((s, c) => s + (c.payU - c.debtU), 0) + re.netU + omt.usd + sc.u - supPayU;
     const recvL = cust.rows.reduce((s, c) => s + Math.max(0, c.balL), 0), recvU = cust.rows.reduce((s, c) => s + Math.max(0, c.balU), 0);
