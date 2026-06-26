@@ -464,7 +464,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
-/* Precompiled to plain JS (React.createElement) — no Babel; runs from file:// and GitHub Pages */
+/* Precompiled to plain JS (React.createElement) — no Babel */
 "use strict";
 const { useState, useEffect, useMemo, useRef, createContext, useContext } = React;
 /* ============================ STORAGE ============================ */
@@ -1737,7 +1737,16 @@ function BarcodeScanner({ onScan, close }) {
         const H = window.Html5Qrcode;
         const F = window.Html5QrcodeSupportedFormats;
         if (!H) {
-            setErr('ماسح الباركود ما حمّل — افتح الرابط وإنت أونلاين مرة وحدة لينحفظ بالكاش');
+            setErr('ماسح الباركود ما حمّل — افتح الرابط وإنت أونلاين مرة وحدة لينحفظ بالكاش، وبعدها بيشتغل أوفلاين.');
+            return;
+        }
+        const insecure = (typeof window.isSecureContext !== 'undefined' && !window.isSecureContext) && location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1';
+        if (location.protocol === 'file:' || insecure) {
+            setErr('⚠️ الكاميرا ما بتشتغل من ملف محفوظ عـالجهاز. لازم تفتح التطبيق من رابط https (متل GitHub Pages). لهلق فيك تكتب رقم الباركود بإيدك بالخانة.');
+            return;
+        }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            setErr('متصفحك ما بيدعم فتح الكاميرا — جرّب بمتصفح Chrome.');
             return;
         }
         const fmts = F ? [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39, F.CODE_93, F.ITF, F.CODABAR, F.QR_CODE] : undefined;
@@ -1751,6 +1760,7 @@ function BarcodeScanner({ onScan, close }) {
         }
         scRef.current = sc;
         const qrbox = (vw, vh) => { const w = Math.round(Math.min(vw * 0.94, 470)); const h = Math.round(Math.max(150, Math.min(w * 0.62, vh * 0.72))); return { width: w, height: h }; };
+        const cfg = { fps: 10, qrbox };
         const onOk = (txt) => { if (doneRef.current)
             return; doneRef.current = true; try {
             if (navigator.vibrate)
@@ -1785,15 +1795,32 @@ function BarcodeScanner({ onScan, close }) {
             }
             catch (e) { }
         };
-        const hi = { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } };
-        sc.start(hi, { fps: 15, qrbox, aspectRatio: 1.35 }, onOk, () => { }).then(afterStart).catch(() => {
-            try {
-                sc.start({ facingMode: 'environment' }, { fps: 10, qrbox }, onOk, () => { }).then(afterStart).catch(() => setErr('ما قدرنا نفتح الكاميرا — اسمح بالكاميرا من إعدادات المتصفح، ولازم الرابط يكون https'));
-            }
-            catch (e) {
-                setErr('ما قدرنا نفتح الكاميرا');
-            }
-        });
+        const fail = (e) => {
+            if (doneRef.current)
+                return;
+            const n = String((e && (e.name || e.message)) || e || '');
+            setErr(/NotAllowed|Permission|Denied/i.test(n) ? '🚫 الكاميرا مرفوضة. اسمح بالكاميرا لهالموقع من إعدادات المتصفح (أيقونة القفل بشريط العنوان → الكاميرا → سماح)، وبعدها افتح الماسح مرة تانية.'
+                : /NotFound|Devices/i.test(n) ? 'ما في كاميرا متاحة عـهالجهاز.'
+                    : /NotReadable|TrackStart|InUse/i.test(n) ? '📷 الكاميرا مشغولة ببرنامج تاني — سكّر باقي التطبيقات يلي عم تستعمل الكاميرا وجرّب.'
+                        : /Overconstrained|Constraint/i.test(n) ? 'إعدادات الكاميرا مش مدعومة — جرّب مرة تانية.'
+                            : 'ما قدرنا نفتح الكاميرا' + (n ? ' (' + n + ')' : '') + '. تأكد إنك سامح بالكاميرا وإنو الرابط https. فيك تكتب الباركود بإيدك بالخانة.');
+        };
+        // most reliable flow: getCameras (asks permission) -> start back camera by id -> fallback facingMode
+        const startById = (id) => sc.start({ deviceId: { exact: id } }, cfg, onOk, () => { }).then(afterStart);
+        const startFacing = () => sc.start({ facingMode: 'environment' }, cfg, onOk, () => { }).then(afterStart);
+        try {
+            H.getCameras().then((cams) => {
+                if (!cams || !cams.length) {
+                    startFacing().catch(fail);
+                    return;
+                }
+                const back = cams.find((c) => /back|rear|environment|world|خلف/i.test(c.label || '')) || cams[cams.length - 1];
+                startById(back.id).catch(() => startFacing().catch(fail));
+            }).catch((e) => { startFacing().catch(() => fail(e)); });
+        }
+        catch (e) {
+            startFacing().catch(fail);
+        }
         return () => { doneRef.current = true; try {
             if (sc.isScanning) {
                 sc.stop().then(() => { try {
@@ -1828,6 +1855,27 @@ function BarcodeScanner({ onScan, close }) {
             await tr.applyConstraints({ advanced: [{ zoom: z }] });
     }
     catch (e) { } };
+    const retry = () => {
+        setErr('');
+        setReady(false);
+        doneRef.current = false;
+        const sc = scRef.current;
+        if (!sc)
+            return;
+        const onOk = (t) => { if (doneRef.current)
+            return; doneRef.current = true; try {
+            sc.stop().then(() => onScan(t)).catch(() => onScan(t));
+        }
+        catch (e) {
+            onScan(t);
+        } };
+        try {
+            sc.start({ facingMode: 'environment' }, { fps: 10 }, onOk, () => { }).then(() => setReady(true)).catch(() => setErr('لسا ما فتحت الكاميرا — تأكد إنك سمحت بالكاميرا والرابط https، أو سكّر التطبيق وافتحو من جديد.'));
+        }
+        catch (e) {
+            setErr('لسا ما فتحت الكاميرا.');
+        }
+    };
     return React.createElement("div", { className: "scan-ov" },
         React.createElement("div", { className: "scan-box" },
             React.createElement("div", { className: "scan-head" },
@@ -1842,9 +1890,9 @@ function BarcodeScanner({ onScan, close }) {
                     Math.round(zoom * 10) / 10,
                     "\u00D7")),
             React.createElement("div", { className: "scan-actions" },
-                torchCap && React.createElement("button", { className: "btn btn-ghost", onClick: toggleTorch, disabled: !ready },
+                err ? React.createElement("button", { className: "btn btn-primary", onClick: retry }, "\uD83D\uDD04 \u062C\u0631\u0651\u0628 \u0645\u0631\u0629 \u062A\u0627\u0646\u064A\u0629") : (torchCap ? React.createElement("button", { className: "btn btn-ghost", onClick: toggleTorch, disabled: !ready },
                     "\uD83D\uDD26 ",
-                    torchOn ? 'إطفاء' : 'فلاش'),
+                    torchOn ? 'إطفاء' : 'فلاش') : null),
                 React.createElement("button", { className: "btn btn-dark", onClick: close }, "\u0625\u063A\u0644\u0627\u0642"))));
 }
 function InvEntry({ storeKey, kind }) {
