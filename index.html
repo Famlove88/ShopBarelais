@@ -427,6 +427,34 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .cust-bal.credit .cb-a{color:var(--brand-2)}
 .cb-after{font-size:12.5px;color:var(--muted);margin-top:6px;padding-top:6px;border-top:1px dashed rgba(0,0,0,.12)}
 .cb-after b{color:var(--ink);font-weight:800}
+/* ============ v12: camera barcode scanner + bigger qty stepper ============ */
+.scan-ov{position:fixed;inset:0;z-index:1000;background:rgba(15,23,42,.74);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:16px}
+.scan-box{width:100%;max-width:460px;background:var(--surface);border-radius:20px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.42);display:flex;flex-direction:column}
+.scan-head{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;font-weight:800;font-size:14.5px;color:var(--ink);border-bottom:1px solid var(--line)}
+.scan-x{width:34px;height:34px;border:none;background:var(--surface-2);border-radius:10px;font-size:21px;color:var(--muted);font-weight:800;line-height:1}
+.scan-reader{width:100%;min-height:262px;background:#000;position:relative}
+.scan-reader video{width:100%!important;height:auto!important;display:block;object-fit:cover}
+.scan-reader img{max-width:60px;opacity:.5}
+.scan-hint{padding:11px 16px;font-size:12.5px;color:var(--muted);text-align:center;line-height:1.65}
+.scan-err{padding:14px 16px;font-size:13px;color:var(--neg);text-align:center;font-weight:700;line-height:1.7}
+.scan-actions{display:flex;gap:9px;padding:10px 16px 15px}
+.scan-actions .btn{flex:1;margin:0}
+.scan-row{display:flex;gap:8px;align-items:stretch}
+.scan-input{flex:1;min-width:0}
+.scan-cam-btn{flex-shrink:0;width:54px;border:1.5px solid var(--line);background:var(--brand-soft);color:var(--brand-2);border-radius:11px;font-size:23px;font-weight:800}
+.scan-cam-btn:active{background:var(--brand);color:#fff}
+/* bigger qty stepper so the typed number is clearly visible on phone */
+.stepper{min-height:54px}
+.stepper button{width:50px;height:54px;font-size:26px}
+.step-in{font-size:23px!important;font-weight:900!important;letter-spacing:.5px;min-height:54px;color:var(--ink)}
+/* ============ v13: scanner zoom slider + extra-clear qty number ============ */
+.scan-zoom{display:flex;align-items:center;gap:11px;padding:9px 16px 3px}
+.scan-zoom input[type=range]{flex:1;height:28px;accent-color:var(--brand-2)}
+.scan-zoom>span{font-size:14px;font-weight:800;color:var(--ink)}
+.scan-zoom .num{min-width:42px;text-align:left}
+.step-in{font-size:27px!important}
+.stepper{min-height:58px}
+.stepper button{height:58px;width:52px}
 
 </style>
 </head>
@@ -434,6 +462,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
 <div id="root"></div>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
 /* Precompiled to plain JS (React.createElement) — no Babel; runs from file:// and GitHub Pages */
 "use strict";
@@ -1693,13 +1722,138 @@ function Inventory({ storeKey }) {
         tab === 'stock' && React.createElement(InvStock, { storeKey: storeKey }),
         tab === 'items' && React.createElement(InvItems, { storeKey: storeKey }));
 }
+function BarcodeScanner({ onScan, close }) {
+    const ui = useUI();
+    const [err, setErr] = useState('');
+    const [ready, setReady] = useState(false);
+    const [torchOn, setTorchOn] = useState(false);
+    const [torchCap, setTorchCap] = useState(false);
+    const [zoom, setZoom] = useState(1);
+    const [zoomCap, setZoomCap] = useState(null);
+    const scRef = useRef(null);
+    const trackRef = useRef(null);
+    const doneRef = useRef(false);
+    useEffect(() => {
+        const H = window.Html5Qrcode;
+        const F = window.Html5QrcodeSupportedFormats;
+        if (!H) {
+            setErr('ماسح الباركود ما حمّل — افتح الرابط وإنت أونلاين مرة وحدة لينحفظ بالكاش');
+            return;
+        }
+        const fmts = F ? [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39, F.CODE_93, F.ITF, F.CODABAR, F.QR_CODE] : undefined;
+        let sc;
+        try {
+            sc = new H('bc-reader', { formatsToSupport: fmts, experimentalFeatures: { useBarCodeDetectorIfSupported: true }, verbose: false });
+        }
+        catch (e) {
+            setErr('تعذّر تشغيل الماسح');
+            return;
+        }
+        scRef.current = sc;
+        const qrbox = (vw, vh) => { const w = Math.round(Math.min(vw * 0.94, 470)); const h = Math.round(Math.max(150, Math.min(w * 0.62, vh * 0.72))); return { width: w, height: h }; };
+        const onOk = (txt) => { if (doneRef.current)
+            return; doneRef.current = true; try {
+            if (navigator.vibrate)
+                navigator.vibrate(70);
+        }
+        catch (e) { } try {
+            sc.stop().then(() => onScan(txt)).catch(() => onScan(txt));
+        }
+        catch (e) {
+            onScan(txt);
+        } };
+        const afterStart = () => {
+            setReady(true);
+            try {
+                const v = document.querySelector('#bc-reader video');
+                const tr = (v && v.srcObject && v.srcObject.getVideoTracks) ? v.srcObject.getVideoTracks()[0] : null;
+                trackRef.current = tr;
+                if (tr && tr.getCapabilities) {
+                    const caps = tr.getCapabilities();
+                    if (caps.torch)
+                        setTorchCap(true);
+                    if (caps.zoom && typeof caps.zoom === 'object' && caps.zoom.max > caps.zoom.min) {
+                        const st = tr.getSettings ? tr.getSettings() : {};
+                        setZoomCap({ min: caps.zoom.min, max: caps.zoom.max, step: caps.zoom.step || 0.1 });
+                        setZoom(st.zoom || caps.zoom.min);
+                    }
+                    try {
+                        tr.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+                    }
+                    catch (e) { }
+                }
+            }
+            catch (e) { }
+        };
+        const hi = { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } };
+        sc.start(hi, { fps: 15, qrbox, aspectRatio: 1.35 }, onOk, () => { }).then(afterStart).catch(() => {
+            try {
+                sc.start({ facingMode: 'environment' }, { fps: 10, qrbox }, onOk, () => { }).then(afterStart).catch(() => setErr('ما قدرنا نفتح الكاميرا — اسمح بالكاميرا من إعدادات المتصفح، ولازم الرابط يكون https'));
+            }
+            catch (e) {
+                setErr('ما قدرنا نفتح الكاميرا');
+            }
+        });
+        return () => { doneRef.current = true; try {
+            if (sc.isScanning) {
+                sc.stop().then(() => { try {
+                    sc.clear();
+                }
+                catch (e) { } }).catch(() => { });
+            }
+            else {
+                try {
+                    sc.clear();
+                }
+                catch (e) { }
+            }
+        }
+        catch (e) { } };
+    }, []);
+    const toggleTorch = async () => { const tr = trackRef.current; try {
+        if (tr && tr.applyConstraints) {
+            await tr.applyConstraints({ advanced: [{ torch: !torchOn }] });
+            setTorchOn(!torchOn);
+        }
+        else if (scRef.current) {
+            await scRef.current.applyVideoConstraints({ advanced: [{ torch: !torchOn }] });
+            setTorchOn(!torchOn);
+        }
+    }
+    catch (e) {
+        ui.toast('الفلاش مش متوفر عـهالجهاز');
+    } };
+    const onZoom = async (z) => { setZoom(z); const tr = trackRef.current; try {
+        if (tr && tr.applyConstraints)
+            await tr.applyConstraints({ advanced: [{ zoom: z }] });
+    }
+    catch (e) { } };
+    return React.createElement("div", { className: "scan-ov" },
+        React.createElement("div", { className: "scan-box" },
+            React.createElement("div", { className: "scan-head" },
+                React.createElement("span", null, "\uD83D\uDCF7 \u0648\u062C\u0651\u0647 \u0627\u0644\u0643\u0627\u0645\u064A\u0631\u0627 \u0639\u0640\u0627\u0644\u0628\u0627\u0631\u0643\u0648\u062F"),
+                React.createElement("button", { className: "scan-x", onClick: close }, "\u00D7")),
+            React.createElement("div", { id: "bc-reader", className: "scan-reader" }),
+            err ? React.createElement("div", { className: "scan-err" }, err) : React.createElement("div", { className: "scan-hint" }, "\u0642\u0631\u0651\u0628 \u0627\u0644\u0628\u0627\u0631\u0643\u0648\u062F \u0644\u062F\u0627\u062E\u0644 \u0627\u0644\u0625\u0637\u0627\u0631 \u0648\u062B\u0628\u0651\u062A \u0625\u064A\u062F\u0643 \u00B7 \u0644\u0644\u0628\u0627\u0631\u0643\u0648\u062F \u0627\u0644\u0635\u063A\u064A\u0631 \u0627\u0633\u062A\u0639\u0645\u0644 \u0627\u0644\u0632\u0648\u0645 \u062A\u062D\u062A \uD83D\uDC47 \u00B7 \u0634\u063A\u0651\u0644 \u0627\u0644\u0641\u0644\u0627\u0634 \u0628\u0627\u0644\u0639\u062A\u0645\u0629"),
+            zoomCap && !err && React.createElement("div", { className: "scan-zoom" },
+                React.createElement("span", null, "\uD83D\uDD0D"),
+                React.createElement("input", { type: "range", min: zoomCap.min, max: zoomCap.max, step: zoomCap.step, value: zoom, onChange: (e) => onZoom(parseFloat(e.target.value)) }),
+                React.createElement("span", { className: "num" },
+                    Math.round(zoom * 10) / 10,
+                    "\u00D7")),
+            React.createElement("div", { className: "scan-actions" },
+                torchCap && React.createElement("button", { className: "btn btn-ghost", onClick: toggleTorch, disabled: !ready },
+                    "\uD83D\uDD26 ",
+                    torchOn ? 'إطفاء' : 'فلاش'),
+                React.createElement("button", { className: "btn btn-dark", onClick: close }, "\u0625\u063A\u0644\u0627\u0642"))));
+}
 function InvEntry({ storeKey, kind }) {
     const db = useDB();
     const ui = useUI();
     const store = db[storeKey];
     const rate = db.settings.rate;
     const { rows } = invStats(store, rate);
-    const [item, setItem] = useState(''), [curr, setCurr] = useState('LBP'), [qty, setQty] = useState('1'), [price, setPrice] = useState(''), [tot, setTot] = useState('');
+    const [item, setItem] = useState(''), [curr, setCurr] = useState('LBP'), [qty, setQty] = useState('1'), [price, setPrice] = useState(''), [tot, setTot] = useState(''), [scanOpen, setScanOpen] = useState(false);
     const q = N(qty);
     useEffect(() => { setTot(String(N(qty) * N(price))); }, [qty, price]);
     const total = N(tot);
@@ -1726,18 +1880,26 @@ function InvEntry({ storeKey, kind }) {
     const recs = (kind === 'sell' ? store.sales : store.purchases).slice(0, 30);
     return React.createElement(React.Fragment, null,
         React.createElement("div", { className: "card" },
-            React.createElement(Field, { label: "\u0628\u0627\u0631\u0643\u0648\u062F (\u0627\u0645\u0633\u062D \u0623\u0648 \u0627\u0643\u062A\u0628)" },
-                React.createElement("input", { placeholder: "\uD83D\uDD2D \u0627\u0645\u0633\u062D \u0627\u0644\u0628\u0627\u0631\u0643\u0648\u062F \u0644\u064A\u062E\u062A\u0627\u0631 \u0627\u0644\u0635\u0646\u0641", autoCapitalize: "off", onKeyDown: (e) => { if (e.key === 'Enter') {
-                        const v = e.target.value.trim();
-                        const it = (store.items || []).find((x) => x.code && String(x.code) === v);
-                        if (it) {
-                            setItem(it.name);
-                            ui.toast('تم: ' + it.name);
-                        }
-                        else if (v)
-                            ui.toast('ما لقيت صنف بهالباركود');
-                        e.target.value = '';
-                    } } })),
+            React.createElement(Field, { label: "\u0628\u0627\u0631\u0643\u0648\u062F (\u0627\u0645\u0633\u062D \u0628\u0627\u0644\u0643\u0627\u0645\u064A\u0631\u0627 \u0623\u0648 \u0627\u0643\u062A\u0628)" },
+                React.createElement("div", { className: "scan-row" },
+                    React.createElement("input", { className: "scan-input", placeholder: "\uD83D\uDD2D \u0627\u0645\u0633\u062D \u0623\u0648 \u0627\u0643\u062A\u0628 \u0627\u0644\u0628\u0627\u0631\u0643\u0648\u062F", autoCapitalize: "off", onKeyDown: (e) => { if (e.key === 'Enter') {
+                            const v = e.target.value.trim();
+                            const it = (store.items || []).find((x) => x.code && String(x.code) === v);
+                            if (it) {
+                                setItem(it.name);
+                                ui.toast('تم: ' + it.name);
+                            }
+                            else if (v)
+                                ui.toast('ما لقيت صنف بهالباركود');
+                            e.target.value = '';
+                        } } }),
+                    React.createElement("button", { type: "button", className: "scan-cam-btn", onClick: () => setScanOpen(true) }, "\uD83D\uDCF7"))),
+            scanOpen && React.createElement(BarcodeScanner, { onScan: (code) => { setScanOpen(false); const v = String(code).trim(); const it = (store.items || []).find((x) => x.code && String(x.code) === v); if (it) {
+                    setItem(it.name);
+                    ui.toast('✓ ' + it.name);
+                }
+                else
+                    ui.toast('ما لقيت صنف بهالباركود: ' + v); }, close: () => setScanOpen(false) }),
             React.createElement(Field, { label: "\u0627\u0644\u0635\u0646\u0641" },
                 React.createElement("select", { value: item, onChange: (e) => setItem(e.target.value) },
                     React.createElement("option", { value: "" }, "\u2014 \u0627\u062E\u062A\u0631 \u0627\u0644\u0635\u0646\u0641 \u2014"),
@@ -1752,9 +1914,9 @@ function InvEntry({ storeKey, kind }) {
                     React.createElement("b", { className: stockAfter < 0 ? 'neg' : 'pos' }, stockAfter))),
             React.createElement(Field, { label: "\u0627\u0644\u0639\u0645\u0644\u0629" },
                 React.createElement(CurrPills, { curr: curr, setCurr: setCurr })),
-            React.createElement("div", { className: "three" },
-                React.createElement(Field, { label: "\u0627\u0644\u0643\u0645\u064A\u0629" },
-                    React.createElement(Stepper, { value: qty, onChange: setQty })),
+            React.createElement(Field, { label: "\u0627\u0644\u0643\u0645\u064A\u0629" },
+                React.createElement(Stepper, { value: qty, onChange: setQty })),
+            React.createElement("div", { className: "two" },
                 React.createElement(Field, { label: "\u0633\u0639\u0631 \u0627\u0644\u0642\u0637\u0639\u0629" },
                     React.createElement(Money, { value: price, onChange: setPrice, usd: curr === 'USD' })),
                 React.createElement(Field, { label: "\u0627\u0644\u0625\u062C\u0645\u0627\u0644\u064A (\u0644\u0644\u062A\u0639\u062F\u064A\u0644)" },
@@ -1828,7 +1990,7 @@ function InvItems({ storeKey }) {
     const db = useDB();
     const ui = useUI();
     const store = db[storeKey];
-    const [nm, setNm] = useState(''), [cat, setCat] = useState(''), [img, setImg] = useState(''), [code, setCode] = useState('');
+    const [nm, setNm] = useState(''), [cat, setCat] = useState(''), [img, setImg] = useState(''), [code, setCode] = useState(''), [codeScan, setCodeScan] = useState(false);
     const [sheet, setSheet] = useState(null);
     const cats = Array.from(new Set(store.items.map((it) => it.cat || ''))).filter(Boolean);
     const add = () => {
@@ -1854,7 +2016,10 @@ function InvItems({ storeKey }) {
             React.createElement(Field, { label: "\u0627\u0633\u0645 \u0627\u0644\u0635\u0646\u0641" },
                 React.createElement("input", { value: nm, onChange: (e) => setNm(e.target.value), placeholder: "\u0645\u062B\u0627\u0644: Glass Protection" })),
             React.createElement(Field, { label: "\u0628\u0627\u0631\u0643\u0648\u062F (\u0627\u062E\u062A\u064A\u0627\u0631\u064A)" },
-                React.createElement("input", { value: code, onChange: (e) => setCode(e.target.value), placeholder: "\u0627\u0645\u0633\u062D \u0623\u0648 \u0627\u0643\u062A\u0628 \u0627\u0644\u0628\u0627\u0631\u0643\u0648\u062F", autoCapitalize: "off" })),
+                React.createElement("div", { className: "scan-row" },
+                    React.createElement("input", { className: "scan-input", value: code, onChange: (e) => setCode(e.target.value), placeholder: "\u0627\u0645\u0633\u062D \u0623\u0648 \u0627\u0643\u062A\u0628 \u0627\u0644\u0628\u0627\u0631\u0643\u0648\u062F", autoCapitalize: "off" }),
+                    React.createElement("button", { type: "button", className: "scan-cam-btn", onClick: () => setCodeScan(true) }, "\uD83D\uDCF7"))),
+            codeScan && React.createElement(BarcodeScanner, { onScan: (c) => { setCode(String(c).trim()); setCodeScan(false); ui.toast('باركود: ' + String(c).trim()); }, close: () => setCodeScan(false) }),
             React.createElement(Field, { label: "\u0627\u0644\u0641\u0626\u0629" },
                 React.createElement("input", { value: cat, onChange: (e) => setCat(e.target.value), placeholder: "\u0645\u062B\u0644\u0627\u064B: \u062D\u0645\u0627\u064A\u0627\u062A / \u0634\u0648\u0627\u062D\u0646 / \u0633\u0645\u0627\u0639\u0627\u062A", list: 'cats-' + storeKey }),
                 React.createElement("datalist", { id: 'cats-' + storeKey }, cats.map((c) => React.createElement("option", { key: c, value: c })))),
@@ -2104,9 +2269,9 @@ function ServicePage({ svc }) {
                         React.createElement("button", { className: 'pill ' + (ikind === 'sell' ? 'on-in' : ''), onClick: () => setIkind('sell') }, "\u0628\u064A\u0639 (\u0635\u0646\u062F\u0648\u0642 +)"))),
                 React.createElement(Field, { label: "\u0627\u0644\u0639\u0645\u0644\u0629" },
                     React.createElement(CurrPills, { curr: icurr, setCurr: setIcurr })),
-                React.createElement("div", { className: "three" },
-                    React.createElement(Field, { label: "\u0643\u0645\u064A\u0629" },
-                        React.createElement(Stepper, { value: iqty, onChange: setIqty })),
+                React.createElement(Field, { label: "\u0643\u0645\u064A\u0629" },
+                    React.createElement(Stepper, { value: iqty, onChange: setIqty })),
+                React.createElement("div", { className: "two" },
                     React.createElement(Field, { label: "\u0627\u0644\u0633\u0639\u0631" },
                         React.createElement(Money, { value: iprice, onChange: setIprice, usd: icurr === 'USD' })),
                     React.createElement(Field, { label: "\u0625\u062C\u0645\u0627\u0644\u064A (\u0644\u0644\u062A\u0639\u062F\u064A\u0644)" },
@@ -3073,9 +3238,9 @@ function Invoice() {
                     items.map((n) => React.createElement("option", { key: n, value: n }, n)))),
             React.createElement(Field, { label: "\u0627\u0644\u0639\u0645\u0644\u0629" },
                 React.createElement(CurrPills, { curr: curr, setCurr: setCurr })),
-            React.createElement("div", { className: "three" },
-                React.createElement(Field, { label: "\u0643\u0645\u064A\u0629" },
-                    React.createElement(Stepper, { value: qty, onChange: setQty })),
+            React.createElement(Field, { label: "\u0643\u0645\u064A\u0629" },
+                React.createElement(Stepper, { value: qty, onChange: setQty })),
+            React.createElement("div", { className: "two" },
                 React.createElement(Field, { label: "\u0633\u0639\u0631" },
                     React.createElement(Money, { value: price, onChange: setPrice, usd: curr === 'USD' })),
                 React.createElement(Field, { label: "\u0625\u062C\u0645\u0627\u0644\u064A (\u0644\u0644\u062A\u0639\u062F\u064A\u0644)" },
