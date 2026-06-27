@@ -458,6 +458,20 @@ input,select,textarea{font-family:inherit;font-size:16px}
 /* ============ v14: data size monitor bar ============ */
 .size-bar{height:13px;background:var(--surface-2);border-radius:7px;overflow:hidden;margin:5px 0 7px;border:1px solid var(--line)}
 .size-fill{height:100%;border-radius:7px;transition:width .45s ease}
+/* ============ v15: hero high-contrast pos/neg + toggle button ============ */
+.hero .num.pos{ color:#4ade80 !important; font-weight:800 }
+.hero .num.neg{ color:#ff8f80 !important; font-weight:800 }
+.hero .cell .cap{ color:rgba(255,255,255,.82) }
+.toggle-btn{ border:1.5px solid var(--line); background:var(--surface-2); color:var(--muted); font-weight:800; font-size:13px; padding:7px 18px; border-radius:20px; cursor:pointer; white-space:nowrap }
+.toggle-btn.on{ background:rgba(22,163,74,.12); border-color:#16a34a; color:#16a34a }
+/* ============ v16: dashboard welcome banner ============ */
+.welcome{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:11px 14px;margin-bottom:13px;box-shadow:0 4px 14px rgba(0,0,0,.04)}
+.welcome .w-av{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#0e7a5f,#0b3d2e);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;flex-shrink:0}
+.welcome .w-txt{flex:1;min-width:0}
+.welcome .w-hi{font-size:12.5px;color:var(--muted);font-weight:600}
+.welcome .w-nm{font-size:16px;font-weight:800;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.welcome .w-role{font-size:12px;color:var(--brand-2);font-weight:700}
+.welcome .w-date{font-size:11.5px;color:var(--muted);text-align:left;font-weight:700;flex-shrink:0;max-width:96px;line-height:1.35}
 
 </style>
 </head>
@@ -475,6 +489,7 @@ const { useState, useEffect, useMemo, useRef, createContext, useContext } = Reac
 const DB_KEY = 'famstore_db_v1';
 const WA_DEFAULT = 'مرحبا {name} 🌹\nهيدا كشف حسابكن لدى {shop}.\nالرصيد المستحق عليكم: {balance}.\nيرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.';
 const BROADCAST_DEFAULT = '🎉 عرض خاص من FAM STORE!\nوصلتنا بضاعة جديدة وأسعار منيحة 📱\nمرحبا فيكن تمرقوا عـالمحل. للاستفسار: 71917163';
+const APP_VERSION = 'v18 · 2026-06-27';
 const DEFAULT_SERVICES = () => [{ id: 'whish', name: 'Whish', icon: '💸' }, { id: 'ipick', name: 'iPick', icon: '🎫' }, { id: 'bycel', name: 'ByCel', icon: '📶' }, { id: 'ushare', name: 'Ushare', icon: '🔗' }];
 const USERS_DEFAULT = () => [{ id: 'u_admin', username: 'DAM', password: 'DAM', role: 'admin', active: true, perms: { profit: true, items: true, settings: true, delete: true } }, { id: 'u_fam', username: 'fam', password: 'fam', role: 'cashier', active: true, perms: { profit: false, items: false, settings: false, delete: true } }];
 const blank = () => ({
@@ -1446,6 +1461,7 @@ function Clock() {
 function Dashboard({ go }) {
     const db = useDB();
     const ui = useUI();
+    const rc = useRole();
     const rate = db.settings.rate;
     const [fq, setFq] = useState('');
     const omt = omtBalance(db), oT = omtToday(db);
@@ -1477,6 +1493,30 @@ function Dashboard({ go }) {
     const openItem = (it) => { const sp = it.etype ? mkEdit(db, it.etype, it.erec) : null; ui.detail({ title: it.t, rows: it.rows, onDelete: it.del, receipt: it.receipt, edit: sp ? { spec: sp, rec: it.erec } : null }); };
     const shortcuts = [['omt', '💱', 'OMT'], ['acc', '🎧', 'إكسسوار'], ['mob', '📱', 'موبايل'], ['rec', '🔋', 'تعبئة'], ['services', '🧾', 'خدمات'], ['cust', '👥', 'زبائن'], ['suppliers', '🏭', 'موردين'], ['rev', '📊', 'مداخيل'], ['invoice', '🧮', 'فاتورة'], ['omtcus', '🪪', 'هويات'], ['contacts', '📒', 'عناوين'], ['reports', '📊', 'تقارير'], ['calc', '➗', 'حاسبة']];
     return React.createElement("div", { className: "page page-dash" },
+        (() => {
+            const h = new Date().getHours();
+            const greet = h < 12 ? 'صباح الخير' : h < 17 ? 'نهارك سعيد' : 'مساء الخير';
+            const u = (rc && rc.user && rc.user.username) || '';
+            let dstr = '';
+            try {
+                dstr = new Date().toLocaleDateString('ar', { weekday: 'long', day: 'numeric', month: 'long' });
+            }
+            catch (e) {
+                dstr = todayISO();
+            }
+            return React.createElement("div", { className: "welcome" },
+                React.createElement("div", { className: "w-av" }, (u || '?').charAt(0).toUpperCase()),
+                React.createElement("div", { className: "w-txt" },
+                    React.createElement("div", { className: "w-hi" },
+                        greet,
+                        " \uD83D\uDC4B"),
+                    React.createElement("div", { className: "w-nm" },
+                        u,
+                        React.createElement("span", { className: "w-role" },
+                            " \u00B7 ",
+                            rc && rc.role === 'admin' ? 'مدير' : 'كاشير'))),
+                React.createElement("div", { className: "w-date" }, dstr));
+        })(),
         React.createElement("div", { className: "dash" },
             React.createElement("div", { className: "d-hero" },
                 React.createElement("div", { className: "hero" },
@@ -4124,6 +4164,15 @@ function Settings({ onLogout, go }) {
                         "\u2B06 \u0627\u0633\u062A\u064A\u0631\u0627\u062F",
                         React.createElement("input", { type: "file", accept: "application/json", onChange: importJSON, style: { display: 'none' } }))),
                 React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 10 } }, "\u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0645\u062D\u0641\u0648\u0638\u0629 \u0645\u062D\u0644\u064A\u0627\u064B \u0639\u0644\u0649 \u0627\u0644\u062C\u0647\u0627\u0632 \u0648\u0645\u0632\u0627\u0645\u064E\u0646\u0629 \u0639\u0628\u0631 Firestore.")),
+            React.createElement("div", { className: "card" },
+                React.createElement("div", { className: "sec-h tight" },
+                    React.createElement("div", { className: "bar" }),
+                    React.createElement("h2", null, "\uD83D\uDD12 \u0627\u0644\u0623\u0645\u0627\u0646 \u0648\u0627\u0644\u0642\u0641\u0644")),
+                React.createElement("div", { className: "kv" },
+                    React.createElement("div", { className: "k" }, "\u0627\u0644\u0642\u0641\u0644 \u0627\u0644\u062A\u0644\u0642\u0627\u0626\u064A \u0639\u0646\u062F \u0627\u0644\u062E\u0645\u0648\u0644 (\u0663 \u062F\u0642\u0627\u0626\u0642)"),
+                    React.createElement("button", { className: 'toggle-btn ' + ((s.autoLock !== false) ? 'on' : ''), onClick: () => setS({ ...s, autoLock: !(s.autoLock !== false) }) }, (s.autoLock !== false) ? 'مفعّل' : 'متوقّف')),
+                React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 6 } }, "\u0632\u0631 \u0627\u0644\u0642\u0641\u0644 \u0627\u0644\u064A\u062F\u0648\u064A \uD83D\uDD12 \u0641\u0648\u0642 \u0628\u064A\u0636\u0644 \u0634\u063A\u0651\u0627\u0644 \u062F\u0627\u064A\u0645\u064B\u0627. \u0644\u0645\u0627 \u064A\u0643\u0648\u0646 \u00AB\u0645\u062A\u0648\u0642\u0651\u0641\u00BB\u060C \u0627\u0644\u062A\u0637\u0628\u064A\u0642 \u0645\u0627 \u0628\u064A\u0642\u0641\u0644 \u0644\u062D\u0627\u0644\u0648 \u0639\u0646\u062F \u0627\u0644\u062E\u0645\u0648\u0644."),
+                React.createElement("button", { className: "btn btn-primary", style: { marginTop: 8 }, onClick: save }, "\u062D\u0641\u0638 \u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0627\u0644\u0642\u0641\u0644")),
             React.createElement(SizeMonitor, null)),
         !can('settings') && React.createElement("div", { className: "card" },
             React.createElement("div", { className: "hint", style: { textAlign: 'right' } }, "\u0648\u0636\u0639 \u0645\u062D\u062F\u0648\u062F \u2014 \u0628\u0639\u0636 \u0627\u0644\u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0645\u062A\u0627\u062D\u0629 \u0644\u0644\u0645\u0633\u0624\u0648\u0644 \u0641\u0642\u0637.")),
@@ -4133,7 +4182,12 @@ function Settings({ onLogout, go }) {
         admin && React.createElement("button", { className: "btn btn-ghost", style: { marginTop: 9 }, onClick: () => go('cloudlog') }, "\uD83D\uDCE1 \u0627\u0644\u0633\u062C\u0644 \u0627\u0644\u0633\u062D\u0627\u0628\u064A (\u062A\u062C\u0631\u064A\u0628\u064A)"),
         React.createElement("button", { className: "btn btn-danger", style: { marginTop: 11 }, onClick: onLogout }, "\uD83D\uDEAA \u062A\u0633\u062C\u064A\u0644 \u062E\u0631\u0648\u062C"),
         React.createElement("div", { className: "hint", style: { marginTop: 14 } },
-            "FAM STORE \u00B7 v1 \u0648\u064A\u0628 \u00B7 ",
+            db.settings.name || 'FAM STORE',
+            " \u00B7 ",
+            db.settings.addr || '',
+            " \u00B7 ",
+            APP_VERSION,
+            " \u00B7 ",
             role === 'admin' ? 'أدمن' : 'كاشير'));
 }
 /* ============================ APP ROOT ============================ */
@@ -4150,7 +4204,11 @@ function LockScreen({ user, onUnlock, onLogout }) {
     return React.createElement("div", { className: "lock-ov" },
         React.createElement("div", { className: "lock-box" },
             React.createElement("div", { className: "lock-ic" }, "\uD83D\uDD12"),
-            React.createElement("div", { className: "lock-nm" }, user.username),
+            React.createElement("div", { className: "lock-nm" }, db.settings.name || 'FAM STORE'),
+            React.createElement("div", { className: "lock-sub" },
+                db.settings.addr || '',
+                " \u00B7 \uD83D\uDC64 ",
+                user.username),
             React.createElement("div", { className: "lock-sub" }, "\u0627\u0644\u062A\u0637\u0628\u064A\u0642 \u0645\u0642\u0641\u0651\u0644 \u2014 \u0623\u062F\u062E\u0644 \u0643\u0644\u0645\u0629 \u0627\u0644\u0633\u0631 \u0644\u0644\u0645\u062A\u0627\u0628\u0639\u0629"),
             React.createElement("input", { type: "password", value: p, autoFocus: true, onChange: (e) => { setP(e.target.value); setErr(''); }, onKeyDown: (e) => e.key === 'Enter' && go(), placeholder: "\u2022\u2022\u2022\u2022" }),
             err && React.createElement("div", { className: "err" }, err),
@@ -4164,7 +4222,11 @@ function Shell() {
     const [locked, setLocked] = useState(false);
     useEffect(() => { if (!user)
         return; let t; const reset = () => { if (t)
-        clearTimeout(t); t = setTimeout(() => setLocked(true), 180000); }; const evs = ['mousedown', 'keydown', 'touchstart', 'scroll']; evs.forEach((e) => window.addEventListener(e, reset, { passive: true })); reset(); return () => { if (t)
+        clearTimeout(t); t = setTimeout(() => { try {
+        if (_db.settings && _db.settings.autoLock === false)
+            return;
+    }
+    catch (e) { } setLocked(true); }, 180000); }; const evs = ['mousedown', 'keydown', 'touchstart', 'scroll']; evs.forEach((e) => window.addEventListener(e, reset, { passive: true })); reset(); return () => { if (t)
         clearTimeout(t); evs.forEach((e) => window.removeEventListener(e, reset)); }; }, [user]);
     const [svc, setSvc] = useState('Whish');
     const [cust, setCust] = useState(null);
