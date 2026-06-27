@@ -455,6 +455,9 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .step-in{font-size:27px!important}
 .stepper{min-height:58px}
 .stepper button{height:58px;width:52px}
+/* ============ v14: data size monitor bar ============ */
+.size-bar{height:13px;background:var(--surface-2);border-radius:7px;overflow:hidden;margin:5px 0 7px;border:1px solid var(--line)}
+.size-fill{height:100%;border-radius:7px;transition:width .45s ease}
 
 </style>
 </head>
@@ -463,6 +466,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
 <script>
 /* Precompiled to plain JS (React.createElement) — no Babel */
 "use strict";
@@ -670,6 +674,7 @@ catch (e) {
 const firebaseConfig = { apiKey: "AIzaSyAVr5L81CTOX3xs5uDy5FoWdt9TQTFd_sI", authDomain: "shopbarelais.firebaseapp.com", projectId: "shopbarelais", storageBucket: "shopbarelais.firebasestorage.app", messagingSenderId: "208284024800", appId: "1:208284024800:web:cdd04143d295ed6a547585" };
 let fbDoc = null;
 let fbImages = null;
+let fbTx = null;
 const _imgFetching = new Set();
 let syncState = 'off';
 const syncSubs = new Set();
@@ -678,13 +683,47 @@ let _pushT = null;
 function schedulePush() { if (!fbDoc)
     return; setSync('syncing'); if (_pushT)
     clearTimeout(_pushT); _pushT = setTimeout(pushFirebase, 800); }
+function lzAvail() { return !!window.LZString; }
+function packCloud(obj) { const j = JSON.stringify(obj); try {
+    if (lzAvail())
+        return { cz: window.LZString.compressToBase64(j), z: 1 };
+}
+catch (e) { } return { json: j }; }
+function unpackCloud(d) { try {
+    if (d && d.z && d.cz) {
+        const x = window.LZString.decompressFromBase64(d.cz);
+        return x ? JSON.parse(x) : null;
+    }
+}
+catch (e) { } try {
+    if (d && d.json)
+        return JSON.parse(d.json);
+}
+catch (e) { } return null; }
 function pushFirebase() { if (!fbDoc)
     return; setSync('syncing'); try {
-    fbDoc.set({ json: JSON.stringify(_db), _rev: _db._rev || 0, ts: Date.now() }).then(() => setSync('synced')).catch(() => setSync('off'));
+    fbDoc.set({ ...packCloud(_db), _rev: _db._rev || 0, ts: Date.now() }).then(() => setSync('synced')).catch(() => setSync('off'));
 }
 catch (e) {
     setSync('off');
 } }
+function deviceId() { try {
+    let d = localStorage.getItem('fam_device');
+    if (!d) {
+        d = 'dev_' + Math.random().toString(36).slice(2, 7);
+        localStorage.setItem('fam_device', d);
+    }
+    return d;
+}
+catch (e) {
+    return 'dev_?';
+} }
+function cloudLogTx(kind, summary, rec) { try {
+    if (!fbTx)
+        return;
+    fbTx.add({ kind, summary: summary || '', by: _user || '—', device: deviceId(), ts: Date.now(), date: (rec && rec.date) || todayISO(), payload: rec || {} }).catch(() => { });
+}
+catch (e) { } }
 function initFirebase() {
     try {
         if (!window.firebase) {
@@ -700,6 +739,12 @@ function initFirebase() {
             fbImages = null;
         }
         try {
+            fbTx = firebase.firestore().collection('txlog');
+        }
+        catch (e) {
+            fbTx = null;
+        }
+        try {
             migrateImages();
         }
         catch (e) { }
@@ -707,17 +752,19 @@ function initFirebase() {
         fbDoc.onSnapshot((snap) => {
             const d = snap.data() || {};
             const rrev = d._rev || 0, lrev = _db._rev || 0;
-            if (d.json && rrev > lrev) {
+            if ((d.cz || d.json) && rrev > lrev) {
                 try {
-                    const remote = JSON.parse(d.json);
-                    _db = normalize(remote);
-                    try {
-                        localStorage.setItem(DB_KEY, JSON.stringify(_db));
+                    const remote = unpackCloud(d);
+                    if (remote) {
+                        _db = normalize(remote);
+                        try {
+                            localStorage.setItem(DB_KEY, JSON.stringify(_db));
+                        }
+                        catch (e) { }
+                        subs.forEach((f) => f());
+                        setSync('synced');
+                        return;
                     }
-                    catch (e) { }
-                    subs.forEach((f) => f());
-                    setSync('synced');
-                    return;
                 }
                 catch (e) { }
             }
@@ -1619,7 +1666,7 @@ function OMTTransfer() {
             return ui.toast('حط مبلغ أوّلاً');
         ui.confirm({ title: 'تأكيد حوالة OMT', desc: dir === 'IN' ? 'تسجيل حوالة دخول (IN):' : 'تسجيل حوالة خروج (OUT):',
             lines: [['النوع', dir === 'IN' ? 'دخول (IN)' : 'خروج (OUT)'], ['ليرة', N(lbp) ? fLBP(lbp) + ' ل.ل' : ''], ['دولار', N(usd) ? fUSD(usd) + ' $' : '']],
-            onOk: () => { const ref = fmtRef('OMT', nextSeq(db, 'omt')); db.omt.unshift({ id: uid(), ts: now(), dir, lbp: N(lbp), usd: N(usd), date: todayISO(), ref }); logAudit('إضافة', 'OMT ' + (dir === 'IN' ? 'دخول' : 'خروج') + ' ' + money2(N(lbp), N(usd))); saveDB(); setLbp(''); setUsd(''); ui.toast('انحفظت الحوالة ✓'); } });
+            onOk: () => { const ref = fmtRef('OMT', nextSeq(db, 'omt')); db.omt.unshift({ id: uid(), ts: now(), dir, lbp: N(lbp), usd: N(usd), date: todayISO(), ref }); logAudit('إضافة', 'OMT ' + (dir === 'IN' ? 'دخول' : 'خروج') + ' ' + money2(N(lbp), N(usd))); saveDB(); cloudLogTx('omt', (dir === 'IN' ? 'دخول' : 'خروج') + ' ' + money2(N(lbp), N(usd)), { dir, lbp: N(lbp), usd: N(usd), ref, date: todayISO() }); setLbp(''); setUsd(''); ui.toast('انحفظت الحوالة ✓'); } });
     };
     return React.createElement(React.Fragment, null,
         React.createElement("div", { className: "card" },
@@ -1647,7 +1694,7 @@ function OMTExch() {
             return ui.toast('حط المبلغ');
         ui.confirm({ title: 'تأكيد صرافة', desc: type === 'USD' ? 'تحويل دولار إلى ليرة:' : 'تحويل ليرة إلى دولار:',
             lines: [['المبلغ', type === 'USD' ? fUSD(amt) + ' $' : fLBP(amt) + ' ل.ل'], ['سعر الصرف', fLBP(rate)], ['الناتج', type === 'USD' ? fLBP(total) + ' ل.ل' : fUSD(total) + ' $']],
-            onOk: () => { const ref = fmtRef('SRF', nextSeq(db, 'exch')); db.omtExch.unshift({ id: uid(), ts: now(), type, amount: N(amt), rate: N(rate), total, date: todayISO(), ref }); logAudit('إضافة', 'صرافة عملة ' + ref); saveDB(); setAmt(''); ui.toast('انحفظت الصرافة ✓'); } });
+            onOk: () => { const ref = fmtRef('SRF', nextSeq(db, 'exch')); db.omtExch.unshift({ id: uid(), ts: now(), type, amount: N(amt), rate: N(rate), total, date: todayISO(), ref }); logAudit('إضافة', 'صرافة عملة ' + ref); saveDB(); cloudLogTx('exch', (type === 'USD' ? 'دولار→ليرة' : 'ليرة→دولار') + ' ' + (type === 'USD' ? fUSD(amt) + '$' : fLBP(amt)), { type, amount: N(amt), rate: N(rate), total, ref, date: todayISO() }); setAmt(''); ui.toast('انحفظت الصرافة ✓'); } });
     };
     return React.createElement(React.Fragment, null,
         React.createElement("div", { className: "card" },
@@ -1922,6 +1969,7 @@ function InvEntry({ storeKey, kind }) {
                 (kind === 'sell' ? store.sales : store.purchases).unshift(rec);
                 logAudit('إضافة', (kind === 'sell' ? 'بيع' : 'شراء') + ' — ' + item);
                 saveDB();
+                cloudLogTx(storeKey, (kind === 'sell' ? 'بيع' : 'شراء') + ' ' + item + ' ×' + q, rec);
                 setQty('1');
                 setPrice('');
                 ui.toast(kind === 'sell' ? 'انحفظ البيع ✓' : 'انحفظ الشراء ✓');
@@ -2239,7 +2287,7 @@ function ServicePage({ svc }) {
             return ui.toast('حط المبلغ');
         ui.confirm({ title: 'تأكيد حركة رصيد — ' + svc, desc: svc + ' — ' + (kind === 'sell' ? 'بيع رصيد (بيزيد الصندوق)' : 'شراء/تعبئة رصيد (بينقص الصندوق)') + ':',
             lines: [['الخدمة', svc], ['النوع', kind === 'sell' ? 'بيع رصيد' : 'شراء رصيد'], ['المبلغ', mc(curr, amt)], ['تأثير الصندوق', (kind === 'sell' ? '+ ' : '− ') + mc(curr, amt)]],
-            onOk: () => { db.other.unshift({ id: uid(), ts: now(), svc, kind, curr, amount: N(amt), date: todayISO() }); logAudit('إضافة', 'خدمة ' + svc + ' ' + (kind === 'sell' ? 'بيع' : 'شراء') + ' ' + mc(curr, N(amt))); saveDB(); setAmt(''); ui.toast('انحفظ ✓'); } });
+            onOk: () => { db.other.unshift({ id: uid(), ts: now(), svc, kind, curr, amount: N(amt), date: todayISO() }); logAudit('إضافة', 'خدمة ' + svc + ' ' + (kind === 'sell' ? 'بيع' : 'شراء') + ' ' + mc(curr, N(amt))); saveDB(); cloudLogTx('svc', svc + ' ' + (kind === 'sell' ? 'بيع رصيد' : 'شراء رصيد') + ' ' + mc(curr, N(amt)), { svc, kind, curr, amount: N(amt), date: todayISO() }); setAmt(''); ui.toast('انحفظ ✓'); } });
     };
     // ---- items ----
     const [pick, setPick] = useState(''), [ikind, setIkind] = useState('sell'), [iqty, setIqty] = useState('1'), [icurr, setIcurr] = useState('LBP'), [iprice, setIprice] = useState(''), [itotal, setItotal] = useState('');
@@ -2256,7 +2304,7 @@ function ServicePage({ svc }) {
             return ui.toast('حط الكمية');
         ui.confirm({ title: 'تأكيد حركة صنف — ' + svc, desc: (ikind === 'sell' ? 'بيع ' : 'شراء ') + sel.name + ':',
             lines: [['الصنف', sel.name], ['النوع', ikind === 'sell' ? 'بيع' : 'شراء'], ['الكمية', String(N(iqty))], ['السعر', mc(icurr, iprice)], ['الإجمالي', mc(icurr, itotal)], ['تأثير الصندوق', (ikind === 'sell' ? '+ ' : '− ') + mc(icurr, itotal)]],
-            onOk: () => { db.other.unshift({ id: uid(), ts: now(), svc, kind: ikind, item: sel.name, qty: N(iqty), price: N(iprice), curr: icurr, total: N(itotal), amount: N(itotal), cost: N(iqty) * N(sel.buy), date: todayISO() }); logAudit('إضافة', 'خدمة ' + svc + ' · ' + sel.name + ' ×' + N(iqty)); saveDB(); setIqty('1'); ui.toast('انحفظ ✓'); } });
+            onOk: () => { db.other.unshift({ id: uid(), ts: now(), svc, kind: ikind, item: sel.name, qty: N(iqty), price: N(iprice), curr: icurr, total: N(itotal), amount: N(itotal), cost: N(iqty) * N(sel.buy), date: todayISO() }); logAudit('إضافة', 'خدمة ' + svc + ' · ' + sel.name + ' ×' + N(iqty)); saveDB(); cloudLogTx('svcitem', svc + ' · ' + sel.name + ' ' + (ikind === 'sell' ? 'بيع' : 'شراء') + ' ×' + N(iqty), { svc, kind: ikind, item: sel.name, qty: N(iqty), date: todayISO() }); setIqty('1'); ui.toast('انحفظ ✓'); } });
     };
     // ---- item management ----
     const [nm, setNm] = useState(''), [buy, setBuy] = useState(''), [sell, setSell] = useState(''), [img, setImg] = useState(''), [mcur, setMcur] = useState('LBP');
@@ -2863,6 +2911,7 @@ function SupEntry({ kind }) {
                     db.supPayments = [rec, ...(db.supPayments || [])];
                 logAudit('إضافة', (kind === 'owe' ? 'علينا لمورّد' : 'تسديد لمورّد') + ' — ' + name + ' ' + money2(N(lbp), N(usd)));
                 saveDB();
+                cloudLogTx(kind === 'owe' ? 'supowe' : 'suppay', name + ' ' + money2(N(lbp), N(usd)), rec);
                 setLbp('');
                 setUsd('');
                 setDesc('');
@@ -3015,6 +3064,7 @@ function CustEntry({ kind }) {
                     db.payments.unshift(rec);
                 logAudit('إضافة', (kind === 'debt' ? 'دين' : 'تسديد') + ' — ' + name + ' ' + money2(N(lbp), N(usd)));
                 saveDB();
+                cloudLogTx(kind === 'debt' ? 'debt' : 'pay', name + ' ' + money2(N(lbp), N(usd)), rec);
                 setLbp('');
                 setUsd('');
                 setDesc('');
@@ -3822,6 +3872,188 @@ function BoxReport() {
             React.createElement("div", { className: "hint", style: { textAlign: 'right' } }, "\u0648\u0636\u0639 \u0627\u0644\u0643\u0627\u0634\u064A\u0631 \u2014 \u0631\u0623\u0633 \u0627\u0644\u0645\u0627\u0644 \u0648\u0627\u0644\u0623\u0631\u0628\u0627\u062D \u0645\u062A\u0627\u062D\u0629 \u0644\u0644\u0623\u062F\u0645\u0646 \u0641\u0642\u0637.")));
 }
 /* ============================ SETTINGS ============================ */
+function dbStats(db) {
+    const json = JSON.stringify(db);
+    let raw;
+    try {
+        raw = new Blob([json]).size;
+    }
+    catch (e) {
+        raw = json.length * 2;
+    }
+    let bytes = raw, comp = false;
+    try {
+        if (window.LZString) {
+            const cz = window.LZString.compressToBase64(json);
+            bytes = new Blob([cz]).size;
+            comp = true;
+        }
+    }
+    catch (e) { }
+    const arrays = ['omt', 'omtAdj', 'omtExch', 'other', 'debts', 'payments', 'supDebts', 'supPayments', 'revenue', 'expenses', 'invoices', 'closings', 'audit', 'omtcus', 'rates', 'contacts'];
+    let tx = 0;
+    arrays.forEach((k) => { if (Array.isArray(db[k]))
+        tx += db[k].length; });
+    ['acc', 'mob', 'rec'].forEach((k) => { if (db[k])
+        tx += ((db[k].sales || []).length + (db[k].purchases || []).length); });
+    const wk = Date.now() - 7 * 86400000;
+    let recent = 0;
+    const scan = (arr) => { (arr || []).forEach((x) => { const t = N(x.ts) || (x.date ? Date.parse(x.date) : 0); if (t >= wk)
+        recent++; }); };
+    arrays.forEach((k) => scan(db[k]));
+    ['acc', 'mob', 'rec'].forEach((k) => { if (db[k]) {
+        scan(db[k].sales);
+        scan(db[k].purchases);
+    } });
+    const perDay = recent / 7;
+    const LIMIT = 1048576;
+    const pct = Math.min(100, Math.round(bytes / LIMIT * 1000) / 10);
+    const bpt = tx > 0 ? bytes / tx : 220;
+    const daysLeft = perDay > 0 ? Math.floor(Math.max(0, LIMIT - bytes) / (bpt * perDay)) : null;
+    return { bytes, raw, comp, tx, pct, perDay: Math.round(perDay), daysLeft };
+}
+function SizeMonitor() {
+    const db = useDB();
+    const st = dbStats(db);
+    const fmtB = (b) => b < 1024 ? b + ' B' : (b / 1024).toFixed(1) + ' KB';
+    const col = st.pct >= 85 ? 'neg' : st.pct >= 60 ? 'amber-t' : 'pos';
+    const barC = st.pct >= 85 ? 'var(--neg)' : st.pct >= 60 ? '#f59e0b' : 'var(--brand-2)';
+    return React.createElement("div", { className: "card" },
+        React.createElement("div", { className: "sec-h tight" },
+            React.createElement("div", { className: "bar" }),
+            React.createElement("h2", null, "\uD83D\uDCCA \u062D\u062C\u0645 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0648\u0627\u0644\u0633\u0639\u0629")),
+        React.createElement("div", { className: "kv" },
+            React.createElement("div", { className: "k" }, "\u0627\u0644\u0645\u0633\u062A\u0639\u0645\u0644 (\u0645\u0632\u0627\u0645\u0646\u0629 \u0633\u062D\u0627\u0628\u064A\u0629)"),
+            React.createElement("div", { className: 'v num ' + col },
+                fmtB(st.bytes),
+                " / 1 MB")),
+        React.createElement("div", { className: "size-bar" },
+            React.createElement("div", { className: "size-fill", style: { width: st.pct + '%', background: barC } })),
+        React.createElement("div", { className: "kv" },
+            React.createElement("div", { className: "k" }, "\u0627\u0644\u0646\u0633\u0628\u0629 \u0645\u0646 \u0627\u0644\u062D\u062F"),
+            React.createElement("div", { className: 'v num ' + col },
+                st.pct,
+                "%")),
+        st.comp && React.createElement("div", { className: "kv" },
+            React.createElement("div", { className: "k" }, "\uD83D\uDDDC\uFE0F \u0645\u0648\u0641\u0651\u0631 \u0628\u0627\u0644\u0636\u063A\u0637"),
+            React.createElement("div", { className: "v num pos" },
+                Math.round((1 - st.bytes / Math.max(1, st.raw)) * 100),
+                "% \u00B7 \u0627\u0644\u0623\u0635\u0644\u064A ",
+                (st.raw / 1024).toFixed(1),
+                " KB")),
+        React.createElement("div", { className: "kv" },
+            React.createElement("div", { className: "k" }, "\u0639\u062F\u062F \u0627\u0644\u062D\u0631\u0643\u0627\u062A \u0627\u0644\u0645\u062E\u0632\u0651\u0646\u0629"),
+            React.createElement("div", { className: "v num" }, st.tx.toLocaleString('en-US'))),
+        React.createElement("div", { className: "kv" },
+            React.createElement("div", { className: "k" }, "\u0645\u0639\u062F\u0651\u0644 \u0622\u062E\u0631 \u0623\u0633\u0628\u0648\u0639"),
+            React.createElement("div", { className: "v num" },
+                "~",
+                st.perDay,
+                "/\u064A\u0648\u0645")),
+        st.daysLeft != null && React.createElement("div", { className: "kv" },
+            React.createElement("div", { className: "k" }, "\u062A\u0642\u062F\u064A\u0631 \u0627\u0644\u0627\u0645\u062A\u0644\u0627\u0621 (\u0628\u0647\u0627\u0644\u0645\u0639\u062F\u0651\u0644)"),
+            React.createElement("div", { className: 'v num ' + (st.daysLeft < 30 ? 'neg' : st.daysLeft < 90 ? 'amber-t' : 'pos') }, st.daysLeft > 3650 ? 'سنين' : '~' + st.daysLeft + ' يوم')),
+        React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 8 } }, st.pct >= 80 ? '⚠️ قرّبت عـالحد — صدّر Backup + Excel، والحل الجذري (سجلات مستقلة) قيد الإعداد.' : 'عند 100% تتوقّف المزامنة عن العمل. صدّر Backup + Excel بانتظام.'));
+}
+function CloudLog() {
+    const [rows, setRows] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [more, setMore] = useState(false);
+    const [err, setErr] = useState('');
+    const [done, setDone] = useState(false);
+    const cursor = useRef(null);
+    const [qText, setQText] = useState(''), [kindF, setKindF] = useState('all'), [from, setFrom] = useState(''), [to, setTo] = useState('');
+    const tm = (ts) => { const d = new Date(N(ts)); const p = (n) => String(n).padStart(2, '0'); return p(d.getHours()) + ':' + p(d.getMinutes()); };
+    const kindLbl = { omt: 'حوالة OMT', exch: 'صرافة', acc: 'إكسسوارات', mob: 'موبايل', rec: 'تعبئة', debt: 'دين زبون', pay: 'تسديد زبون', supowe: 'علينا لمورّد', suppay: 'تسديد مورّد', svc: 'رصيد خدمة', svcitem: 'صنف خدمة' };
+    const kindIc = { omt: '↗', exch: '🔁', acc: '🎧', mob: '📱', rec: '⚡', debt: '📕', pay: '📗', supowe: '🏭', suppay: '💸', svc: '💳', svcitem: '🎫' };
+    const load = (first) => {
+        if (!fbTx) {
+            setErr('المزامنة السحابية مش فعّالة — تأكد من النت وإنك فاتح من رابط https.');
+            setLoading(false);
+            return;
+        }
+        setErr('');
+        if (first)
+            setLoading(true);
+        else
+            setMore(true);
+        const fa = from ? Date.parse(from + 'T00:00:00') : null, tb = to ? Date.parse(to + 'T23:59:59') : null;
+        let q = fbTx;
+        if (fa)
+            q = q.where('ts', '>=', fa);
+        if (tb)
+            q = q.where('ts', '<=', tb);
+        q = q.orderBy('ts', 'desc');
+        if (!first && cursor.current)
+            q = q.startAfter(cursor.current);
+        q = q.limit(40);
+        q.get().then((snap) => {
+            const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            if (snap.docs.length)
+                cursor.current = snap.docs[snap.docs.length - 1];
+            if (snap.docs.length < 40)
+                setDone(true);
+            setRows((prev) => first ? docs : [...prev, ...docs]);
+            setLoading(false);
+            setMore(false);
+        }).catch((e) => { setErr('تعذّر جلب السجل: ' + ((e && e.message) || e)); setLoading(false); setMore(false); });
+    };
+    useEffect(() => { load(true); }, []);
+    const applyRange = () => { cursor.current = null; setDone(false); setRows([]); load(true); };
+    const me = deviceId();
+    const ql = qText.trim().toLowerCase();
+    const shown = rows.filter((x) => (kindF === 'all' || x.kind === kindF) && (!ql || (((x.summary || '') + ' ' + (x.by || '') + ' ' + (x.device || '') + ' ' + (kindLbl[x.kind] || '')).toLowerCase().indexOf(ql) >= 0)));
+    const CHIPS = [['all', 'الكل'], ['omt', 'OMT'], ['exch', 'صرافة'], ['acc', 'إكسسوارات'], ['mob', 'موبايل'], ['rec', 'تعبئة'], ['debt', 'ديون'], ['pay', 'تسديدات'], ['supowe', 'علينا'], ['suppay', 'تسديد مورّد'], ['svc', 'رصيد خدمة'], ['svcitem', 'صنف خدمة']];
+    return React.createElement("div", { className: "page" },
+        React.createElement("div", { className: "hero compact" },
+            React.createElement("div", { className: "label" }, "\uD83D\uDCE1 \u0627\u0644\u0633\u062C\u0644 \u0627\u0644\u0633\u062D\u0627\u0628\u064A \u2014 \u0628\u062D\u062B"),
+            React.createElement("div", { className: "row" },
+                React.createElement("div", { className: "cell" },
+                    React.createElement("div", { className: "cap" }, "\u0638\u0627\u0647\u0631"),
+                    React.createElement("div", { className: "val num" }, shown.length)),
+                React.createElement("div", { className: "cell" },
+                    React.createElement("div", { className: "cap" }, "\u0645\u062D\u0645\u0651\u0644"),
+                    React.createElement("div", { className: "val num" }, rows.length)))),
+        React.createElement("div", { className: "card" },
+            React.createElement("div", { className: "search-box" },
+                React.createElement("input", { placeholder: "\uD83D\uDD0E \u062F\u0648\u0651\u0631 \u0628\u0627\u0633\u0645/\u0645\u0628\u0644\u063A/\u0643\u0627\u0634\u064A\u0631\u2026", value: qText, onChange: (e) => setQText(e.target.value) })),
+            React.createElement("div", { className: "chip-row", style: { flexWrap: 'wrap', marginTop: 4 } }, CHIPS.map((c) => React.createElement("button", { key: c[0], className: 'chip-pick ' + (kindF === c[0] ? 'on' : ''), onClick: () => setKindF(c[0]) }, c[1]))),
+            React.createElement("div", { className: "two", style: { marginTop: 8 } },
+                React.createElement(Field, { label: "\u0645\u0646 \u062A\u0627\u0631\u064A\u062E" },
+                    React.createElement("input", { type: "date", value: from, onChange: (e) => setFrom(e.target.value) })),
+                React.createElement(Field, { label: "\u0644\u062A\u0627\u0631\u064A\u062E" },
+                    React.createElement("input", { type: "date", value: to, onChange: (e) => setTo(e.target.value) }))),
+            React.createElement("div", { className: "btn-row" },
+                React.createElement("button", { className: "btn btn-ghost", onClick: applyRange }, "\uD83D\uDD0D \u0628\u062D\u062B \u0628\u0627\u0644\u0641\u062A\u0631\u0629"),
+                (from || to) && React.createElement("button", { className: "btn btn-ghost", onClick: () => { setFrom(''); setTo(''); cursor.current = null; setDone(false); setRows([]); setTimeout(() => load(true), 0); } }, "\u21A9\uFE0E \u0643\u0644 \u0627\u0644\u062A\u0648\u0627\u0631\u064A\u062E"))),
+        loading ? React.createElement("div", { className: "card" },
+            React.createElement("div", { className: "hint", style: { textAlign: 'center' } }, "\u0639\u0645 \u064A\u062D\u0645\u0651\u0644\u2026")) :
+            err ? React.createElement("div", { className: "card" },
+                React.createElement("div", { className: "scan-err" }, err)) :
+                rows.length === 0 ? React.createElement(Empty, { ic: "\uD83D\uDCE1", t: "\u0645\u0627 \u0641\u064A \u0633\u062C\u0644\u0627\u062A \u0628\u0647\u0627\u0644\u0641\u062A\u0631\u0629" }) :
+                    React.createElement(React.Fragment, null,
+                        React.createElement("div", { className: "list" }, shown.length === 0 ? React.createElement("div", { className: "card" },
+                            React.createElement("div", { className: "hint", style: { textAlign: 'center' } }, "\u0645\u0627 \u0641\u064A \u0646\u062A\u064A\u062C\u0629 \u0628\u0647\u0627\u0644\u0641\u0644\u062A\u0631 \u2014 \u062C\u0631\u0651\u0628 \u00AB\u062A\u062D\u0645\u064A\u0644 \u0627\u0644\u0645\u0632\u064A\u062F\u00BB \u0623\u0648 \u0648\u0633\u0651\u0639 \u0627\u0644\u0641\u062A\u0631\u0629")) : shown.map((x) => React.createElement("div", { key: x.id, className: "row-item" },
+                            React.createElement("div", { className: "av", style: { background: x.kind === 'exch' ? 'var(--gold-soft)' : 'var(--brand-soft)', color: x.kind === 'exch' ? 'var(--gold)' : 'var(--brand-2)' } }, kindIc[x.kind] || '•'),
+                            React.createElement("div", { className: "main" },
+                                React.createElement("div", { className: "nm" },
+                                    kindLbl[x.kind] || x.kind,
+                                    x.summary ? ' · ' + x.summary : ''),
+                                React.createElement("div", { className: "sb" },
+                                    "\uD83D\uDC64 ",
+                                    x.by || '—',
+                                    " \u00B7 \uD83D\uDCF1 ",
+                                    x.device || '—',
+                                    x.device === me ? ' (هذا الجهاز)' : '',
+                                    " \u00B7 ",
+                                    fDate(x.date),
+                                    " ",
+                                    tm(x.ts)))))),
+                        !done && React.createElement("button", { className: "btn btn-ghost", style: { marginTop: 11 }, disabled: more, onClick: () => load(false) }, more ? '…' : '⬇ تحميل المزيد (صفحة)'),
+                        done && React.createElement("div", { className: "hint", style: { textAlign: 'center', marginTop: 9 } }, "\u2014 \u0646\u0647\u0627\u064A\u0629 \u0627\u0644\u0633\u062C\u0644 \u2014")),
+        React.createElement("div", { className: "card", style: { marginTop: 10 } },
+            React.createElement("div", { className: "hint", style: { textAlign: 'right' } }, "\u0627\u0644\u0628\u062D\u062B \u0627\u0644\u0646\u0635\u0651\u064A \u0648\u0627\u0644\u0641\u0644\u062A\u0631\u0629 \u0628\u064A\u0634\u062A\u063A\u0644\u0648\u0627 \u0639\u0640\u0627\u0644\u0633\u062C\u0644\u0627\u062A \u0627\u0644\u0645\u062D\u0645\u0651\u0644\u0629 \u2014 \u0644\u0648 \u062F\u0648\u0651\u0631\u062A \u0639\u0644\u0649 \u0634\u064A \u0642\u062F\u064A\u0645\u060C \u0627\u0633\u062A\u0639\u0645\u0644 \u00AB\u0628\u062D\u062B \u0628\u0627\u0644\u0641\u062A\u0631\u0629\u00BB (\u0628\u064A\u062C\u064A\u0628 \u0645\u0646 \u0627\u0644\u0633\u062D\u0627\u0628\u0629 \u0645\u0628\u0627\u0634\u0631\u0629) \u0623\u0648 \u00AB\u062A\u062D\u0645\u064A\u0644 \u0627\u0644\u0645\u0632\u064A\u062F\u00BB.")));
+}
 function Settings({ onLogout, go }) {
     const db = useDB();
     const ui = useUI();
@@ -3891,19 +4123,21 @@ function Settings({ onLogout, go }) {
                     React.createElement("label", { className: "btn btn-ghost", style: { cursor: 'pointer' } },
                         "\u2B06 \u0627\u0633\u062A\u064A\u0631\u0627\u062F",
                         React.createElement("input", { type: "file", accept: "application/json", onChange: importJSON, style: { display: 'none' } }))),
-                React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 10 } }, "\u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0645\u062D\u0641\u0648\u0638\u0629 \u0645\u062D\u0644\u064A\u0627\u064B \u0639\u0644\u0649 \u0627\u0644\u062C\u0647\u0627\u0632. \u0644\u0645\u0632\u0627\u0645\u0646\u0629 \u0628\u064A\u0646 \u0627\u0644\u0623\u062C\u0647\u0632\u0629 \u0645\u0646\u0648\u0635\u0644 Firestore \u0644\u0627\u062D\u0642\u0627\u064B."))),
+                React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 10 } }, "\u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0645\u062D\u0641\u0648\u0638\u0629 \u0645\u062D\u0644\u064A\u0627\u064B \u0639\u0644\u0649 \u0627\u0644\u062C\u0647\u0627\u0632 \u0648\u0645\u0632\u0627\u0645\u064E\u0646\u0629 \u0639\u0628\u0631 Firestore.")),
+            React.createElement(SizeMonitor, null)),
         !can('settings') && React.createElement("div", { className: "card" },
             React.createElement("div", { className: "hint", style: { textAlign: 'right' } }, "\u0648\u0636\u0639 \u0645\u062D\u062F\u0648\u062F \u2014 \u0628\u0639\u0636 \u0627\u0644\u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0645\u062A\u0627\u062D\u0629 \u0644\u0644\u0645\u0633\u0624\u0648\u0644 \u0641\u0642\u0637.")),
         admin && React.createElement("button", { className: "btn btn-ghost", style: { marginTop: 11 }, onClick: () => go('users') }, "\uD83D\uDC64 \u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645\u064A\u0646 \u0648\u0627\u0644\u0635\u0644\u0627\u062D\u064A\u0627\u062A"),
         admin && React.createElement("button", { className: "btn btn-ghost", style: { marginTop: 9 }, onClick: () => go('audit') }, "\uD83D\uDCCB \u0633\u062C\u0644 \u0627\u0644\u0639\u0645\u0644\u064A\u0627\u062A (\u0645\u064A\u0646 \u0639\u0645\u0644 \u0634\u0648)"),
         admin && React.createElement("button", { className: "btn btn-ghost", style: { marginTop: 9 }, onClick: () => go('reports') }, "\uD83D\uDCCA \u062A\u0642\u0627\u0631\u064A\u0631 \u0627\u0644\u0641\u062A\u0631\u0629"),
+        admin && React.createElement("button", { className: "btn btn-ghost", style: { marginTop: 9 }, onClick: () => go('cloudlog') }, "\uD83D\uDCE1 \u0627\u0644\u0633\u062C\u0644 \u0627\u0644\u0633\u062D\u0627\u0628\u064A (\u062A\u062C\u0631\u064A\u0628\u064A)"),
         React.createElement("button", { className: "btn btn-danger", style: { marginTop: 11 }, onClick: onLogout }, "\uD83D\uDEAA \u062A\u0633\u062C\u064A\u0644 \u062E\u0631\u0648\u062C"),
         React.createElement("div", { className: "hint", style: { marginTop: 14 } },
             "FAM STORE \u00B7 v1 \u0648\u064A\u0628 \u00B7 ",
             role === 'admin' ? 'أدمن' : 'كاشير'));
 }
 /* ============================ APP ROOT ============================ */
-const TITLES = { dash: 'الرئيسية', box: 'الصندوق', omt: 'حوالات OMT', acc: 'إكسسوارات', mob: 'موبايل', rec: 'تعبئة رصيد', services: 'الخدمات', service: 'خدمة', cust: 'زبائن وديون', cust_stmt: 'كشف حساب', suppliers: 'الموردين', rev: 'مداخيل/مصاريف', invoice: 'فاتورة', omtcus: 'هويات OMT', calc: 'حاسبة', contacts: 'دفتر العناوين', reports: 'تقارير الفترة', audit: 'سجل العمليات', users: 'المستخدمين', settings: 'الإعدادات' };
+const TITLES = { dash: 'الرئيسية', box: 'الصندوق', omt: 'حوالات OMT', acc: 'إكسسوارات', mob: 'موبايل', rec: 'تعبئة رصيد', services: 'الخدمات', service: 'خدمة', cust: 'زبائن وديون', cust_stmt: 'كشف حساب', suppliers: 'الموردين', rev: 'مداخيل/مصاريف', invoice: 'فاتورة', omtcus: 'هويات OMT', calc: 'حاسبة', contacts: 'دفتر العناوين', reports: 'تقارير الفترة', audit: 'سجل العمليات', users: 'المستخدمين', settings: 'الإعدادات', cloudlog: 'سجل سحابي تجريبي' };
 function LockScreen({ user, onUnlock, onLogout }) {
     const db = useDB();
     const [p, setP] = useState(''), [err, setErr] = useState('');
@@ -3972,6 +4206,9 @@ function Shell() {
             break;
         case 'suppliers':
             body = React.createElement(Suppliers, null);
+            break;
+        case 'cloudlog':
+            body = React.createElement(CloudLog, null);
             break;
         case 'cust_stmt':
             body = cust ? React.createElement(CustStatement, { cust: cust, back: () => go('cust') }) : React.createElement(Customers, { openCust: openCust });
