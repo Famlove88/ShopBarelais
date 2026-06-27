@@ -1082,6 +1082,14 @@ function serviceCash(db) { let l = 0, u = 0; db.other.forEach((o) => { const s =
     u += s * N(o.amount);
 else
     l += s * N(o.amount); }); return { l, u }; }
+function exchCash(db) { let l = 0, u = 0; (db.omtExch || []).forEach((x) => { if (x.type === 'USD') {
+    u += N(x.amount);
+    l -= N(x.total);
+}
+else {
+    l += N(x.amount);
+    u -= N(x.total);
+} }); return { l, u }; }
 function svcItemStats(db, svc) {
     const so = (db.services || []).find((x) => x.name === svc) || {};
     const items = so.items || [];
@@ -1469,10 +1477,10 @@ function Dashboard({ go }) {
     const cust = custBalances(db), re = revExp(db);
     const tProfit = acc.T.profit + mob.T.profit + rec.T.profit;
     const stockVal = acc.T.stockVal + mob.T.stockVal + rec.T.stockVal;
-    const sc = serviceCash(db);
+    const sc = serviceCash(db), ex = exchCash(db);
     const supPayL = (db.supPayments || []).reduce((s, x) => s + N(x.lbp), 0), supPayU = (db.supPayments || []).reduce((s, x) => s + N(x.usd), 0);
-    const cashL = N(db.opening.cashL) + (acc.T.saleL + mob.T.saleL + rec.T.saleL) - (acc.T.costL + mob.T.costL + rec.T.costL) + cust.rows.reduce((s, c) => s + (c.payL - c.debtL), 0) + re.netL + omt.lbp + sc.l - supPayL;
-    const cashU = N(db.opening.cashU) + cust.rows.reduce((s, c) => s + (c.payU - c.debtU), 0) + re.netU + omt.usd + sc.u - supPayU;
+    const cashL = N(db.opening.cashL) + (acc.T.saleL + mob.T.saleL + rec.T.saleL) - (acc.T.costL + mob.T.costL + rec.T.costL) + cust.rows.reduce((s, c) => s + (c.payL - c.debtL), 0) + re.netL + omt.lbp + sc.l + ex.l - supPayL;
+    const cashU = N(db.opening.cashU) + cust.rows.reduce((s, c) => s + (c.payU - c.debtU), 0) + re.netU + omt.usd + sc.u + ex.u - supPayU;
     const feed = buildFeed(db), bars = last7sales(db, rate), low = lowStockAll(db);
     const shown = fq.trim() ? feed.filter((it) => ((it.t || '') + ' ' + (it.s || '')).toLowerCase().includes(fq.trim().toLowerCase())) : feed;
     useEffect(() => { try {
@@ -3789,15 +3797,15 @@ function BoxReport() {
     const omt = omtBalance(db), oT = omtToday(db);
     const acc = invStats(db.acc, rate), mob = invStats(db.mob, rate), rec = invStats(db.rec, rate);
     const cust = custBalances(db), re = revExp(db);
-    const sc = serviceCash(db);
+    const sc = serviceCash(db), ex = exchCash(db);
     const supB = supBalances(db);
     const supPayL = (db.supPayments || []).reduce((s, x) => s + N(x.lbp), 0), supPayU = (db.supPayments || []).reduce((s, x) => s + N(x.usd), 0);
     const payblL = supB.rows.reduce((s, r) => s + Math.max(0, r.balL), 0), payblU = supB.rows.reduce((s, r) => s + Math.max(0, r.balU), 0);
     const svcProfit = totalServiceProfit(db), svcCred = totalServiceCredit(db);
     const tProfit = acc.T.profit + mob.T.profit + rec.T.profit + svcProfit + re.netL;
     const stockVal = acc.T.stockVal + mob.T.stockVal + rec.T.stockVal + N(db.opening.stockL);
-    const cashL = N(db.opening.cashL) + (acc.T.saleL + mob.T.saleL + rec.T.saleL) - (acc.T.costL + mob.T.costL + rec.T.costL) + cust.rows.reduce((s, c) => s + (c.payL - c.debtL), 0) + re.netL + omt.lbp + sc.l - supPayL;
-    const cashU = N(db.opening.cashU) + cust.rows.reduce((s, c) => s + (c.payU - c.debtU), 0) + re.netU + omt.usd + sc.u - supPayU;
+    const cashL = N(db.opening.cashL) + (acc.T.saleL + mob.T.saleL + rec.T.saleL) - (acc.T.costL + mob.T.costL + rec.T.costL) + cust.rows.reduce((s, c) => s + (c.payL - c.debtL), 0) + re.netL + omt.lbp + sc.l + ex.l - supPayL;
+    const cashU = N(db.opening.cashU) + cust.rows.reduce((s, c) => s + (c.payU - c.debtU), 0) + re.netU + omt.usd + sc.u + ex.u - supPayU;
     const recvL = cust.rows.reduce((s, c) => s + Math.max(0, c.balL), 0), recvU = cust.rows.reduce((s, c) => s + Math.max(0, c.balU), 0);
     const owedL = cust.rows.reduce((s, c) => s + Math.max(0, -c.balL), 0);
     const capL = cashL + stockVal + svcCred.l + omt.lbp + recvL + (cashU + svcCred.u + omt.usd + recvU) * rate - payblL - payblU * rate;
