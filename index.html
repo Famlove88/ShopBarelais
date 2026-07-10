@@ -158,6 +158,10 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .login .box{background:rgba(255,255,255,.97);border-radius:20px;padding:20px;box-shadow:0 20px 50px rgba(0,0,0,.3)}
 .toast{position:fixed;bottom:88px;left:50%;transform:translateX(-50%);z-index:80;background:var(--ink);color:#fff;
   padding:11px 18px;border-radius:30px;font-weight:700;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.25);animation:up .25s;max-width:90%}
+.toast.t-in{background:linear-gradient(135deg,#0b6e4f,#13a37a);font-weight:900;font-size:15px;padding:14px 24px;border:2px solid #7ef0c3;box-shadow:0 10px 32px rgba(11,110,79,.45)}
+.toast.t-out{background:linear-gradient(135deg,#b91c1c,#e05252);font-weight:900;font-size:15px;padding:14px 24px;border:2px solid #ffb3b3;box-shadow:0 10px 32px rgba(185,28,28,.45)}
+.toast.t-gold{background:linear-gradient(135deg,#a8781c,#d4a640);font-weight:900;font-size:15px;padding:14px 24px;border:2px solid #ffe9b3;box-shadow:0 10px 32px rgba(168,120,28,.45)}
+.toast.t-ok{background:linear-gradient(135deg,#0b6e4f,#13a37a);font-weight:900;font-size:14px;padding:12px 22px;border:2px solid rgba(126,240,195,.6)}
 .muted{color:var(--muted)} .center{text-align:center}
 .hint{font-size:11px;color:var(--muted);font-weight:600;text-align:center;margin-top:14px}
 .kv{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px dashed var(--line);font-size:13.5px}
@@ -511,7 +515,7 @@ const { useState, useEffect, useMemo, useRef, createContext, useContext } = Reac
 const DB_KEY = 'famstore_db_v1';
 const WA_DEFAULT = 'مرحبا {name} 🌹\nهيدا كشف حسابكن لدى {shop}.\nالرصيد المستحق عليكم: {balance}.\nيرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.';
 const BROADCAST_DEFAULT = '🎉 عرض خاص من FAM STORE!\nوصلتنا بضاعة جديدة وأسعار منيحة 📱\nمرحبا فيكن تمرقوا عـالمحل. للاستفسار: 71917163';
-const APP_VERSION = 'v19 · 2026-07-10 — دفتر يومية + تقارير أرباح دقيقة + فاحص أخطاء';
+const APP_VERSION = 'v19.1 · 2026-07-10 — أرباح بالعملتين + تعديل كامل + تأكيدات ملونة';
 const DEFAULT_SERVICES = () => [{ id: 'whish', name: 'Whish', icon: '💸' }, { id: 'ipick', name: 'iPick', icon: '🎫' }, { id: 'bycel', name: 'ByCel', icon: '📶' }, { id: 'ushare', name: 'Ushare', icon: '🔗' }];
 const USERS_DEFAULT = () => [{ id: 'u_admin', username: 'DAM', password: 'DAM', role: 'admin', active: true, perms: { profit: true, items: true, settings: true, delete: true } }, { id: 'u_fam', username: 'fam', password: 'fam', role: 'cashier', active: true, perms: { profit: false, items: false, settings: false, delete: true } }];
 const blank = () => ({
@@ -1205,12 +1209,13 @@ const RoleCtx = createContext({ user: null, setUser: (_) => { }, role: null, adm
 const useRole = () => useContext(RoleCtx);
 function UIProvider({ children }) {
     const [toastMsg, setToastMsg] = useState('');
+    const [toastKind, setToastKind] = useState('');
     const [confirmS, setConfirmS] = useState(null);
     const [detailS, setDetailS] = useState(null);
     const [printDoc, setPrintDoc] = useState(null);
     const tRef = useRef();
     const api = {
-        toast: (m) => { setToastMsg(m); clearTimeout(tRef.current); tRef.current = setTimeout(() => setToastMsg(''), 1700); },
+        toast: (m, kind) => { setToastMsg(m); setToastKind(kind || ''); clearTimeout(tRef.current); tRef.current = setTimeout(() => { setToastMsg(''); setToastKind(''); }, kind ? 2300 : 1700); },
         confirm: (o) => setConfirmS(o),
         detail: (o) => setDetailS(o),
         print: (o) => setPrintDoc(o),
@@ -1228,7 +1233,7 @@ function UIProvider({ children }) {
     }, [printDoc]);
     return React.createElement(UI.Provider, { value: api },
         children,
-        toastMsg && React.createElement("div", { className: "toast" }, toastMsg),
+        toastMsg && React.createElement("div", { className: 'toast' + (toastKind ? ' t-' + toastKind : '') }, toastMsg),
         confirmS && React.createElement(ConfirmModal, { ...confirmS, close: () => setConfirmS(null) }),
         detailS && React.createElement(DetailModal, { ...detailS, close: () => setDetailS(null) }),
         printDoc && ReactDOM.createPortal(React.createElement("div", { className: "print-root" },
@@ -1258,7 +1263,7 @@ function DetailModal({ title, rows, onDelete, edit, receipt, close }) {
     const { can } = useRole();
     const [editing, setEditing] = useState(false);
     if (editing && edit)
-        return React.createElement(EditModal, { spec: edit.spec, rec: edit.rec, onDone: () => ui.toast('انحفظ التعديل ✓'), close: close });
+        return React.createElement(EditModal, { spec: edit.spec, rec: edit.rec, onDone: () => ui.toast('✏️ انحفظ التعديل ✓', 'ok'), close: close });
     return React.createElement(Modal, { onClose: close, title: title, desc: "\u062A\u0641\u0627\u0635\u064A\u0644 \u0627\u0644\u0639\u0645\u0644\u064A\u0629" },
         React.createElement("div", { className: "confirm-box" }, rows.map((r, i) => React.createElement("div", { key: i, className: "confirm-line" },
             React.createElement("span", { className: "cl-k" }, r[0]),
@@ -1270,7 +1275,7 @@ function DetailModal({ title, rows, onDelete, edit, receipt, close }) {
                     onDelete();
                     logAudit('حذف', title || 'عملية');
                     saveDB();
-                    ui.toast('انحذفت العملية');
+                    ui.toast('🗑️ انحذفت العملية', 'out');
                     close();
                 }
                 else if (p != null) {
@@ -1309,8 +1314,10 @@ function mkEdit(db, type, rec) {
         case 'omt': return { title: 'تعديل حوالة', fields: [{ k: 'dir', label: 'النوع', kind: 'select', opts: [['IN', 'دخول'], ['OUT', 'خروج']] }, { k: 'lbp', label: 'ليرة ل.ل', kind: 'money' }, { k: 'usd', label: 'دولار $', kind: 'usd' }, { k: 'date', label: 'التاريخ', kind: 'date' }] };
         case 'exch': return { title: 'تعديل صرافة', fields: [{ k: 'type', label: 'النوع', kind: 'select', opts: [['USD', 'دولار→ليرة'], ['LBP', 'ليرة→دولار']] }, { k: 'amount', label: 'المبلغ', kind: 'money' }, { k: 'rate', label: 'السعر', kind: 'money' }, { k: 'date', label: 'التاريخ', kind: 'date' }], recompute: (r) => { r.total = r.type === 'USD' ? N(r.amount) * N(r.rate) : N(r.amount) / N(r.rate); } };
         case 'adj': return { title: 'تعديل رصيد OMT', fields: [{ k: 'type', label: 'النوع', kind: 'select', opts: [['IN LBP', 'IN LBP'], ['OUT LBP', 'OUT LBP'], ['IN USD', 'IN USD'], ['OUT USD', 'OUT USD']] }, { k: 'amount', label: 'المبلغ', kind: 'money' }, { k: 'date', label: 'التاريخ', kind: 'date' }] };
-        case 'inv': return { title: 'تعديل حركة — ' + rec.item, fields: [{ k: 'qty', label: 'الكمية', kind: 'qty' }, { k: 'curr', label: 'العملة', kind: 'select', opts: [['LBP', 'ليرة ل.ل'], ['USD', 'دولار $']] }, { k: 'price', label: 'سعر القطعة', kind: 'money' }, { k: 'date', label: 'التاريخ', kind: 'date' }], recompute: (r) => { r.total = N(r.qty) * N(r.price); } };
-        case 'svc': return { title: 'تعديل حركة خدمة', fields: [{ k: 'kind', label: 'النوع', kind: 'select', opts: [['buy', 'شراء رصيد (صندوق −)'], ['sell', 'بيع رصيد (صندوق +)']] }, { k: 'curr', label: 'العملة', kind: 'select', opts: [['LBP', 'ليرة ل.ل'], ['USD', 'دولار $']] }, { k: 'amount', label: 'المبلغ', kind: 'money' }, { k: 'date', label: 'التاريخ', kind: 'date' }] };
+        case 'inv': return { title: 'تعديل حركة — ' + rec.item, fields: [{ k: 'item', label: 'اسم الصنف', kind: 'text' }, { k: 'qty', label: 'الكمية', kind: 'qty' }, { k: 'curr', label: 'العملة', kind: 'select', opts: [['LBP', 'ليرة ل.ل'], ['USD', 'دولار $']] }, { k: 'price', label: 'سعر القطعة', kind: 'money' }, { k: 'date', label: 'التاريخ', kind: 'date' }], recompute: (r) => { r.total = N(r.qty) * N(r.price); } };
+        case 'svc': return { title: 'تعديل حركة خدمة — كامل', fields: [{ k: 'svc', label: 'اسم الخدمة', kind: 'text' }, { k: 'kind', label: 'النوع', kind: 'select', opts: [['buy', 'شراء (صندوق −)'], ['sell', 'بيع (صندوق +)']] }, { k: 'item', label: 'الصنف (فاضي = رصيد)', kind: 'text' }, { k: 'qty', label: 'الكمية (للأصناف)', kind: 'qty' }, { k: 'curr', label: 'العملة', kind: 'select', opts: [['LBP', 'ليرة ل.ل'], ['USD', 'دولار $']] }, { k: 'amount', label: 'المبلغ الإجمالي', kind: 'money' }, { k: 'cost', label: 'الكلفة الإجمالية (لحساب الربح)', kind: 'money' }, { k: 'date', label: 'التاريخ', kind: 'date' }], recompute: (r) => { if (r.item) {
+            r.total = N(r.amount);
+        } } };
         case 'debt': return { title: 'تعديل دين', fields: [{ k: 'name', label: 'الزبون', kind: 'select', opts: custOpts }, { k: 'lbp', label: 'ليرة ل.ل', kind: 'money' }, { k: 'usd', label: 'دولار $', kind: 'usd' }, { k: 'desc', label: 'ملاحظة', kind: 'text' }, { k: 'date', label: 'التاريخ', kind: 'date' }] };
         case 'pay': return { title: 'تعديل تسديد', fields: [{ k: 'name', label: 'الزبون', kind: 'select', opts: custOpts }, { k: 'lbp', label: 'ليرة ل.ل', kind: 'money' }, { k: 'usd', label: 'دولار $', kind: 'usd' }, { k: 'date', label: 'التاريخ', kind: 'date' }] };
         case 'rev':
@@ -1752,7 +1759,7 @@ function OMTTransfer() {
             return ui.toast('حط مبلغ أوّلاً');
         ui.confirm({ title: 'تأكيد حوالة OMT', desc: dir === 'IN' ? 'تسجيل حوالة دخول (IN):' : 'تسجيل حوالة خروج (OUT):',
             lines: [['النوع', dir === 'IN' ? 'دخول (IN)' : 'خروج (OUT)'], ['ليرة', N(lbp) ? fLBP(lbp) + ' ل.ل' : ''], ['دولار', N(usd) ? fUSD(usd) + ' $' : '']],
-            onOk: () => { const ref = fmtRef('OMT', nextSeq(db, 'omt')); db.omt.unshift({ id: uid(), ts: now(), dir, lbp: N(lbp), usd: N(usd), date: todayISO(), ref }); logAudit('إضافة', 'OMT ' + (dir === 'IN' ? 'دخول' : 'خروج') + ' ' + money2(N(lbp), N(usd))); saveDB(); cloudLogTx('omt', (dir === 'IN' ? 'دخول' : 'خروج') + ' ' + money2(N(lbp), N(usd)), { dir, lbp: N(lbp), usd: N(usd), ref, date: todayISO() }); setLbp(''); setUsd(''); ui.toast('انحفظت الحوالة ✓'); } });
+            onOk: () => { const ref = fmtRef('OMT', nextSeq(db, 'omt')); db.omt.unshift({ id: uid(), ts: now(), dir, lbp: N(lbp), usd: N(usd), date: todayISO(), ref }); logAudit('إضافة', 'OMT ' + (dir === 'IN' ? 'دخول' : 'خروج') + ' ' + money2(N(lbp), N(usd))); saveDB(); cloudLogTx('omt', (dir === 'IN' ? 'دخول' : 'خروج') + ' ' + money2(N(lbp), N(usd)), { dir, lbp: N(lbp), usd: N(usd), ref, date: todayISO() }); setLbp(''); setUsd(''); ui.toast((dir === 'IN' ? '✅ انحفظت حوالة دخول IN — ' : '📤 انحفظت حوالة خروج OUT — ') + money2(N(lbp), N(usd)) + ' · ' + ref, dir === 'IN' ? 'in' : 'out'); } });
     };
     return React.createElement(React.Fragment, null,
         React.createElement("div", { className: "card" },
@@ -1780,7 +1787,7 @@ function OMTExch() {
             return ui.toast('حط المبلغ');
         ui.confirm({ title: 'تأكيد صرافة', desc: type === 'USD' ? 'تحويل دولار إلى ليرة:' : 'تحويل ليرة إلى دولار:',
             lines: [['المبلغ', type === 'USD' ? fUSD(amt) + ' $' : fLBP(amt) + ' ل.ل'], ['سعر الصرف', fLBP(rate)], ['الناتج', type === 'USD' ? fLBP(total) + ' ل.ل' : fUSD(total) + ' $']],
-            onOk: () => { const ref = fmtRef('SRF', nextSeq(db, 'exch')); db.omtExch.unshift({ id: uid(), ts: now(), type, amount: N(amt), rate: N(rate), total, date: todayISO(), ref }); logAudit('إضافة', 'صرافة عملة ' + ref); saveDB(); cloudLogTx('exch', (type === 'USD' ? 'دولار→ليرة' : 'ليرة→دولار') + ' ' + (type === 'USD' ? fUSD(amt) + '$' : fLBP(amt)), { type, amount: N(amt), rate: N(rate), total, ref, date: todayISO() }); setAmt(''); ui.toast('انحفظت الصرافة ✓'); } });
+            onOk: () => { const ref = fmtRef('SRF', nextSeq(db, 'exch')); db.omtExch.unshift({ id: uid(), ts: now(), type, amount: N(amt), rate: N(rate), total, date: todayISO(), ref }); logAudit('إضافة', 'صرافة عملة ' + ref); saveDB(); cloudLogTx('exch', (type === 'USD' ? 'دولار→ليرة' : 'ليرة→دولار') + ' ' + (type === 'USD' ? fUSD(amt) + '$' : fLBP(amt)), { type, amount: N(amt), rate: N(rate), total, ref, date: todayISO() }); setAmt(''); ui.toast('🔁 انحفظت الصرافة — ' + (type === 'USD' ? fUSD(N(amt)) + ' $ ← ' + fLBP(total) + ' ل.ل' : fLBP(N(amt)) + ' ل.ل ← ' + fUSD(total) + ' $') + ' · ' + ref, 'gold'); } });
     };
     return React.createElement(React.Fragment, null,
         React.createElement("div", { className: "card" },
@@ -1818,7 +1825,7 @@ function OMTAdj() {
             return ui.toast('حط المبلغ');
         ui.confirm({ title: 'تأكيد تعديل رصيد', desc: 'تعديل يدوي على رصيد OMT:',
             lines: [['النوع', type], ['المبلغ', type.indexOf('USD') >= 0 ? fUSD(amt) + ' $' : fLBP(amt) + ' ل.ل']],
-            onOk: () => { db.omtAdj.unshift({ id: uid(), ts: now(), type, amount: N(amt), date: todayISO() }); logAudit('إضافة', 'تعديل رصيد OMT'); saveDB(); setAmt(''); ui.toast('انحفظ التعديل ✓'); } });
+            onOk: () => { db.omtAdj.unshift({ id: uid(), ts: now(), type, amount: N(amt), date: todayISO() }); logAudit('إضافة', 'تعديل رصيد OMT'); saveDB(); setAmt(''); ui.toast('⚖️ انحفظ تعديل رصيد OMT — ' + type + ' ' + fLBP(N(amt)), 'ok'); } });
     };
     return React.createElement(React.Fragment, null,
         React.createElement("div", { className: "card" },
@@ -2058,7 +2065,7 @@ function InvEntry({ storeKey, kind }) {
                 cloudLogTx(storeKey, (kind === 'sell' ? 'بيع' : 'شراء') + ' ' + item + ' ×' + q, rec);
                 setQty('1');
                 setPrice('');
-                ui.toast(kind === 'sell' ? 'انحفظ البيع ✓' : 'انحفظ الشراء ✓');
+                ui.toast(kind === 'sell' ? '✅ انحفظ البيع — ' + item + ' ×' + q + ' — ' + mc(curr, total) : '📥 انحفظ الشراء — ' + item + ' ×' + q + ' — ' + mc(curr, total), kind === 'sell' ? 'in' : 'gold');
             } });
     };
     const recs = (kind === 'sell' ? store.sales : store.purchases).slice(0, 30);
@@ -2373,7 +2380,7 @@ function ServicePage({ svc }) {
             return ui.toast('حط المبلغ');
         ui.confirm({ title: 'تأكيد حركة رصيد — ' + svc, desc: svc + ' — ' + (kind === 'sell' ? 'بيع رصيد (بيزيد الصندوق)' : 'شراء/تعبئة رصيد (بينقص الصندوق)') + ':',
             lines: [['الخدمة', svc], ['النوع', kind === 'sell' ? 'بيع رصيد' : 'شراء رصيد'], ['المبلغ', mc(curr, amt)], ['تأثير الصندوق', (kind === 'sell' ? '+ ' : '− ') + mc(curr, amt)]],
-            onOk: () => { db.other.unshift({ id: uid(), ts: now(), svc, kind, curr, amount: N(amt), date: todayISO() }); logAudit('إضافة', 'خدمة ' + svc + ' ' + (kind === 'sell' ? 'بيع' : 'شراء') + ' ' + mc(curr, N(amt))); saveDB(); cloudLogTx('svc', svc + ' ' + (kind === 'sell' ? 'بيع رصيد' : 'شراء رصيد') + ' ' + mc(curr, N(amt)), { svc, kind, curr, amount: N(amt), date: todayISO() }); setAmt(''); ui.toast('انحفظ ✓'); } });
+            onOk: () => { db.other.unshift({ id: uid(), ts: now(), svc, kind, curr, amount: N(amt), date: todayISO() }); logAudit('إضافة', 'خدمة ' + svc + ' ' + (kind === 'sell' ? 'بيع' : 'شراء') + ' ' + mc(curr, N(amt))); saveDB(); cloudLogTx('svc', svc + ' ' + (kind === 'sell' ? 'بيع رصيد' : 'شراء رصيد') + ' ' + mc(curr, N(amt)), { svc, kind, curr, amount: N(amt), date: todayISO() }); setAmt(''); ui.toast((kind === 'sell' ? '✅ انحفظ بيع ' : '📤 انحفظ شراء ') + svc + ' — ' + mc(curr, N(amt)), kind === 'sell' ? 'in' : 'out'); } });
     };
     // ---- items ----
     const [pick, setPick] = useState(''), [ikind, setIkind] = useState('sell'), [iqty, setIqty] = useState('1'), [icurr, setIcurr] = useState('LBP'), [iprice, setIprice] = useState(''), [itotal, setItotal] = useState('');
@@ -2390,7 +2397,7 @@ function ServicePage({ svc }) {
             return ui.toast('حط الكمية');
         ui.confirm({ title: 'تأكيد حركة صنف — ' + svc, desc: (ikind === 'sell' ? 'بيع ' : 'شراء ') + sel.name + ':',
             lines: [['الصنف', sel.name], ['النوع', ikind === 'sell' ? 'بيع' : 'شراء'], ['الكمية', String(N(iqty))], ['السعر', mc(icurr, iprice)], ['الإجمالي', mc(icurr, itotal)], ['تأثير الصندوق', (ikind === 'sell' ? '+ ' : '− ') + mc(icurr, itotal)]],
-            onOk: () => { db.other.unshift({ id: uid(), ts: now(), svc, kind: ikind, item: sel.name, qty: N(iqty), price: N(iprice), curr: icurr, total: N(itotal), amount: N(itotal), cost: N(iqty) * N(sel.buy), date: todayISO() }); logAudit('إضافة', 'خدمة ' + svc + ' · ' + sel.name + ' ×' + N(iqty)); saveDB(); cloudLogTx('svcitem', svc + ' · ' + sel.name + ' ' + (ikind === 'sell' ? 'بيع' : 'شراء') + ' ×' + N(iqty), { svc, kind: ikind, item: sel.name, qty: N(iqty), date: todayISO() }); setIqty('1'); ui.toast('انحفظ ✓'); } });
+            onOk: () => { db.other.unshift({ id: uid(), ts: now(), svc, kind: ikind, item: sel.name, qty: N(iqty), price: N(iprice), curr: icurr, total: N(itotal), amount: N(itotal), cost: N(iqty) * N(sel.buy), date: todayISO() }); logAudit('إضافة', 'خدمة ' + svc + ' · ' + sel.name + ' ×' + N(iqty)); saveDB(); cloudLogTx('svcitem', svc + ' · ' + sel.name + ' ' + (ikind === 'sell' ? 'بيع' : 'شراء') + ' ×' + N(iqty), { svc, kind: ikind, item: sel.name, qty: N(iqty), date: todayISO() }); setIqty('1'); ui.toast((ikind === 'sell' ? '✅ انحفظ بيع ' : '📤 انحفظ شراء ') + sel.name + ' ×' + N(iqty) + ' — ' + mc(icurr, N(itotal)), ikind === 'sell' ? 'in' : 'out'); } });
     };
     // ---- item management ----
     const [nm, setNm] = useState(''), [buy, setBuy] = useState(''), [sell, setSell] = useState(''), [img, setImg] = useState(''), [mcur, setMcur] = useState('LBP');
@@ -3001,7 +3008,7 @@ function SupEntry({ kind }) {
                 setLbp('');
                 setUsd('');
                 setDesc('');
-                ui.toast('انحفظ ✓');
+                ui.toast((kind === 'owe' ? '📤 انحفظ: علينا لمورّد — ' : '✅ انحفظ تسديد لمورّد — ') + name + ' ' + money2(N(lbp), N(usd)), kind === 'owe' ? 'out' : 'in');
             } });
     };
     return React.createElement(React.Fragment, null,
@@ -3338,7 +3345,7 @@ function REEntry({ kind }) {
             return ui.toast('حط مبلغ');
         ui.confirm({ title: kind === 'rev' ? 'تأكيد مدخول' : 'تأكيد مصروف', desc: (kind === 'rev' ? 'مدخول: ' : 'مصروف: ') + item, danger: kind !== 'rev',
             lines: [['البند', item], ['التصنيف', kind === 'exp' ? cat : ''], ['ليرة', N(lbp) ? fLBP(lbp) + ' ل.ل' : ''], ['دولار', N(usd) ? fUSD(usd) + ' $' : '']],
-            onOk: () => { arr.unshift({ id: uid(), ts: now(), item, lbp: N(lbp), usd: N(usd), date: todayISO(), cat: kind === 'exp' ? cat : '' }); logAudit('إضافة', (kind === 'rev' ? 'مدخول' : 'مصروف · ' + cat) + ' — ' + item); saveDB(); setLbp(''); setUsd(''); ui.toast('انحفظ ✓'); } });
+            onOk: () => { arr.unshift({ id: uid(), ts: now(), item, lbp: N(lbp), usd: N(usd), date: todayISO(), cat: kind === 'exp' ? cat : '' }); logAudit('إضافة', (kind === 'rev' ? 'مدخول' : 'مصروف · ' + cat) + ' — ' + item); saveDB(); setLbp(''); setUsd(''); ui.toast((kind === 'rev' ? '✅ انحفظ مدخول — ' : '📤 انحفظ مصروف — ') + item + ' ' + money2(N(lbp), N(usd)), kind === 'rev' ? 'in' : 'out'); } });
     };
     const addProd = () => { const v = newp.trim(); if (!v)
         return; if (!db.products.includes(v))
@@ -3397,7 +3404,7 @@ function Invoice() {
             return ui.toast('ضيف بنود أوّلاً');
         ui.confirm({ title: 'تأكيد الفاتورة', desc: 'فاتورة #' + num + (cust ? (' — ' + cust) : ''),
             lines: [['عدد البنود', String(lines.length)], ['المجموع', fLBP(total) + ' ل.ل']],
-            onOk: () => { db.invoices.unshift({ id: uid(), ts: now(), number: num, cust, date: todayISO(), lines, total }); logAudit('إضافة', 'فاتورة #' + num + (cust ? ' — ' + cust : '')); saveDB(); ui.toast('انحفظت الفاتورة ✓'); setLines([]); setCust(''); setNum(invNumber()); } });
+            onOk: () => { db.invoices.unshift({ id: uid(), ts: now(), number: num, cust, date: todayISO(), lines, total }); logAudit('إضافة', 'فاتورة #' + num + (cust ? ' — ' + cust : '')); saveDB(); ui.toast('🧾 انحفظت الفاتورة #' + num + ' — ' + fLBP(total) + ' ل.ل', 'gold'); setLines([]); setCust(''); setNum(invNumber()); } });
     };
     return React.createElement("div", { className: "page" },
         React.createElement("div", { className: "card inv-head" },
@@ -3464,7 +3471,7 @@ function OmtCus() {
         if (!f.name || !f.phone)
             return ui.toast('حط الاسم والرقم');
         ui.confirm({ title: 'تأكيد حفظ الهوية', desc: 'تسجيل بيانات زبون OMT:', lines: [['الاسم', f.name], ['الهاتف', f.phone], ['رقم الهوية', f.idnum || '—']],
-            onOk: () => { db.omtcus.unshift({ id: uid(), ts: now(), ...f }); logAudit('إضافة', 'هوية OMT' + (f.name ? ' — ' + f.name : '')); saveDB(); setF({ phone: '', name: '', birth: '', idnum: '', expire: '' }); ui.toast('انحفظ ✓'); } });
+            onOk: () => { db.omtcus.unshift({ id: uid(), ts: now(), ...f }); logAudit('إضافة', 'هوية OMT' + (f.name ? ' — ' + f.name : '')); saveDB(); setF({ phone: '', name: '', birth: '', idnum: '', expire: '' }); ui.toast((kind === 'debt' ? '📤 انحفظ دين على ' : '✅ انحفظ تسديد من ') + name + ' — ' + money2(N(lbp), N(usd)), kind === 'debt' ? 'out' : 'in'); } });
     };
     const list = db.omtcus.filter((c) => !q || c.name.indexOf(q) >= 0 || String(c.phone).indexOf(q) >= 0 || String(c.idnum).indexOf(q) >= 0);
     return React.createElement("div", { className: "page" },
@@ -3584,7 +3591,7 @@ function ClosingCard({ sysL, sysU }) {
         if (!actL && !actU)
             return ui.toast('عُدّ النقد وحطّو');
         ui.confirm({ title: 'تأكيد تقفيل اليوم', desc: 'جرد الصندوق:', lines: [['نقد النظام', fLBP(sysL) + ' ل.ل · ' + fUSD(sysU) + ' $'], ['النقد الفعلي', fLBP(N(actL)) + ' ل.ل · ' + fUSD(N(actU)) + ' $'], ['الفرق', fLBP(diffL) + ' ل.ل · ' + fUSD(diffU) + ' $']],
-            onOk: () => { db.closings = [{ id: uid(), ts: now(), date: todayISO(), sysL, sysU, actL: N(actL), actU: N(actU), diffL, diffU, note: note.trim(), by: (rc.user && rc.user.username) || '' }, ...(db.closings || [])]; logAudit('تقفيل يوم', 'فرق ' + fLBP(diffL) + ' ل.ل'); saveDB(); setActL(''); setActU(''); setNote(''); ui.toast('انحفظ تقفيل اليوم ✓'); } });
+            onOk: () => { db.closings = [{ id: uid(), ts: now(), date: todayISO(), sysL, sysU, actL: N(actL), actU: N(actU), diffL, diffU, note: note.trim(), by: (rc.user && rc.user.username) || '' }, ...(db.closings || [])]; logAudit('تقفيل يوم', 'فرق ' + fLBP(diffL) + ' ل.ل'); saveDB(); setActL(''); setActU(''); setNote(''); ui.toast('🔒 انحفظ تقفيل اليوم — فرق ' + fLBP(diffL) + ' ل.ل', 'ok'); } });
     };
     return React.createElement("div", { className: "card" },
         React.createElement("div", { className: "sec-h tight" },
@@ -3881,10 +3888,10 @@ function Reports() {
         if (showP)
             rows += row('إجمالي المشتريات', fLBP(costL) + ' ل.ل') + row('الربح التقريبي', fLBP(profit) + ' ل.ل');
         if (showP)
-            rows += row('الربح الدقيق (بعد كلفة البضاعة المباعة)', fLBP(rp.cogsProfit) + ' ل.ل') + row('ربح أصناف الخدمات', fLBP(rp.svcItemP) + ' ل.ل') + row('ربح الصرافة (تقريبي)', fLBP(rp.exchP) + ' ل.ل');
+            rows += row('الربح الدقيق (بعد كلفة البضاعة المباعة)', fLBP(rp.cogsProfit) + ' ل.ل · ' + fUSD(rp.cogsProfit / rate) + ' $') + row('ربح أصناف الخدمات', fLBP(rp.svcItemP) + ' ل.ل · ' + fUSD(rp.svcItemP / rate) + ' $') + row('ربح الصرافة (تقريبي)', fLBP(rp.exchP) + ' ل.ل · ' + fUSD(rp.exchP / rate) + ' $');
         rows += row('OMT دخل', fLBP(oInL) + ' ل.ل · ' + fUSD(oInU) + '$') + row('OMT طلع', fLBP(oOutL) + ' ل.ل · ' + fUSD(oOutU) + '$') + row('خدمات بيع', fLBP(svcSell) + ' ل.ل') + row('خدمات شراء', fLBP(svcBuy) + ' ل.ل') + row('ديون أُعطيت', fLBP(debtL) + ' ل.ل · ' + fUSD(debtU) + '$') + row('تسديدات', fLBP(payL) + ' ل.ل · ' + fUSD(payU) + '$') + row('مداخيل', fLBP(revL) + ' ل.ل') + row('مصاريف', fLBP(expL) + ' ل.ل') + row('دفعات موردين', fLBP(supPayRL) + ' ل.ل · ' + fUSD(supPayRU) + '$') + row('صافي حركة الكاش', fLBP(netCash) + ' ل.ل');
         if (showP)
-            rows += '<tr><td style="padding:8px;border-top:2px solid #0b6e4f;font-weight:900">صافي ربح الفترة</td><td style="padding:8px;border-top:2px solid #0b6e4f;text-align:left;font-weight:900;color:#0b6e4f">' + fLBP(netP2) + ' ل.ل</td></tr>';
+            rows += '<tr><td style="padding:8px;border-top:2px solid #0b6e4f;font-weight:900">صافي ربح الفترة</td><td style="padding:8px;border-top:2px solid #0b6e4f;text-align:left;font-weight:900;color:#0b6e4f">' + fLBP(netP2) + ' ل.ل · ≈ ' + fUSD(netP2 / rate) + ' $</td></tr>';
         ui.print({ title: 'تقرير الفترة', html: '<div style="font-family:Cairo,Tahoma,sans-serif;direction:rtl;padding:22px;color:#1a1a1a">' + head + '<table style="width:100%;border-collapse:collapse;font-size:13px">' + rows + '</table></div>' });
     };
     const ui = useUI();
@@ -3955,29 +3962,29 @@ function Reports() {
             React.createElement("div", { className: "sec-h tight" },
                 React.createElement("div", { className: "bar" }),
                 React.createElement("h2", null, "\uD83D\uDCB0 \u0635\u0627\u0641\u064A \u0627\u0644\u0631\u0628\u062D \u0627\u0644\u062A\u0642\u0631\u064A\u0628\u064A")),
-            kv('ربح المبيعات (بعد كلفة البضاعة المباعة)', fLBP(rp.cogsProfit) + ' ل.ل', rp.cogsProfit >= 0 ? 'pos' : 'neg'),
-            kv('ربح أصناف الخدمات', fLBP(rp.svcItemP) + ' ل.ل', rp.svcItemP >= 0 ? 'pos' : 'neg'),
-            kv('ربح الصرافة (تقريبي)', fLBP(rp.exchP) + ' ل.ل', rp.exchP >= 0 ? 'pos' : 'neg'),
-            kv('مداخيل', fLBP(revL) + ' ل.ل'),
-            kv('مصاريف', '− ' + fLBP(expL) + ' ل.ل', 'neg'),
+            kv('ربح المبيعات (بعد كلفة البضاعة المباعة)', fLBP(rp.cogsProfit) + ' ل.ل · ' + fUSD(rp.cogsProfit / rate) + ' $', rp.cogsProfit >= 0 ? 'pos' : 'neg'),
+            kv('ربح أصناف الخدمات', fLBP(rp.svcItemP) + ' ل.ل · ' + fUSD(rp.svcItemP / rate) + ' $', rp.svcItemP >= 0 ? 'pos' : 'neg'),
+            kv('ربح الصرافة (تقريبي)', fLBP(rp.exchP) + ' ل.ل · ' + fUSD(rp.exchP / rate) + ' $', rp.exchP >= 0 ? 'pos' : 'neg'),
+            kv('مداخيل', fLBP(revL) + ' ل.ل · ' + fUSD(revL / rate) + ' $'),
+            kv('مصاريف', '− ' + fLBP(expL) + ' ل.ل · ' + fUSD(expL / rate) + ' $', 'neg'),
             React.createElement("div", { className: "kv", style: { borderTop: '2px solid var(--brand)', marginTop: 6, paddingTop: 9 } },
                 React.createElement("div", { className: "k", style: { fontWeight: 800 } }, "\u0635\u0627\u0641\u064A \u0631\u0628\u062D \u0627\u0644\u0641\u062A\u0631\u0629"),
-                React.createElement("div", { className: 'v num ' + (netP2 >= 0 ? 'pos' : 'neg'), style: { fontSize: 18 } },
-                    fLBP(netP2),
-                    " \u0644.\u0644")),
+                React.createElement("div", { className: 'v num ' + (netP2 >= 0 ? 'pos' : 'neg'), style: { fontSize: 17 } },
+                    fLBP(netP2) + ' \u0644.\u0644',
+                    React.createElement("div", { style: { fontSize: 13, opacity: .85 } }, "\u2248 " + fUSD(netP2 / rate) + " $"))),
             rp.unkSaleL > 0 && React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 6, color: 'var(--neg)' } }, "\u26A0\uFE0F \u0641\u064A \u0645\u0628\u064A\u0639\u0627\u062A \u0628\u0642\u064A\u0645\u0629 " + fLBP(rp.unkSaleL) + " \u0644.\u0644 \u0644\u0623\u0635\u0646\u0627\u0641 \u0628\u0644\u0627 \u0634\u0631\u0627\u0621 \u0645\u0633\u062C\u0651\u0644 \u2014 \u0645\u0627 \u0642\u062F\u0631\u0646\u0627 \u0646\u062D\u0633\u0628 \u0631\u0628\u062D\u0647\u0627 (\u0634\u0648\u0641 \u0641\u062D\u0635 \u0627\u0644\u0623\u062E\u0637\u0627\u0621 \u062A\u062D\u062A)."),
             React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 6 } }, "\u0631\u0628\u062D \u0627\u0644\u0635\u0631\u0627\u0641\u0629 \u0645\u062D\u0633\u0648\u0628 \u0639\u0644\u0649 \u0645\u0639\u062F\u0644 \u0634\u0631\u0627\u0621 \u0627\u0644\u062F\u0648\u0644\u0627\u0631 (" + fLBP(rp.avgBuy) + ") \u00D7 \u0627\u0644\u062F\u0648\u0644\u0627\u0631 \u0627\u0644\u0645\u0628\u0627\u0639 \u0628\u0627\u0644\u0641\u062A\u0631\u0629. \u0641\u0631\u0642 \u0631\u0635\u064A\u062F \u0627\u0644\u062E\u062F\u0645\u0627\u062A (\u0628\u064A\u0639 \u2212 \u062A\u0639\u0628\u0626\u0629 = " + fLBP(svcSell - svcBuy) + " \u0644.\u0644) \u0645\u0634 \u0645\u062D\u0633\u0648\u0628 \u0644\u0623\u0646\u0648 \u062D\u0631\u0643\u0629 \u0631\u0635\u064A\u062F \u0645\u0634 \u0631\u0628\u062D.")),
         showP && React.createElement("div", { className: "card" },
             React.createElement("div", { className: "sec-h tight" },
                 React.createElement("div", { className: "bar" }),
                 React.createElement("h2", null, "\uD83D\uDCB5 \u0627\u0644\u0633\u064A\u0648\u0644\u0629 \u2014 \u062D\u0631\u0643\u0629 \u0627\u0644\u0643\u0627\u0634 \u0628\u0627\u0644\u0641\u062A\u0631\u0629")),
-            kv('كاش داخل (مبيعات + تسديدات + خدمات + مداخيل + OMT)', fLBP(cashIn) + ' ل.ل', 'pos'),
-            kv('كاش خارج (مشتريات + مصاريف + ديون + موردين + OMT)', fLBP(cashOut) + ' ل.ل', 'neg'),
+            kv('كاش داخل (مبيعات + تسديدات + خدمات + مداخيل + OMT)', fLBP(cashIn) + ' ل.ل · ' + fUSD(cashIn / rate) + ' $', 'pos'),
+            kv('كاش خارج (مشتريات + مصاريف + ديون + موردين + OMT)', fLBP(cashOut) + ' ل.ل · ' + fUSD(cashOut / rate) + ' $', 'neg'),
             React.createElement("div", { className: "kv", style: { borderTop: '2px solid var(--line, #ddd)', marginTop: 6, paddingTop: 9 } },
                 React.createElement("div", { className: "k", style: { fontWeight: 800 } }, "\u0635\u0627\u0641\u064A \u062D\u0631\u0643\u0629 \u0627\u0644\u0643\u0627\u0634"),
-                React.createElement("div", { className: 'v num ' + (netCash >= 0 ? 'pos' : 'neg'), style: { fontSize: 17 } },
-                    fLBP(netCash),
-                    " \u0644.\u0644")),
+                React.createElement("div", { className: 'v num ' + (netCash >= 0 ? 'pos' : 'neg'), style: { fontSize: 16 } },
+                    fLBP(netCash) + ' \u0644.\u0644',
+                    React.createElement("div", { style: { fontSize: 12.5, opacity: .85 } }, "\u2248 " + fUSD(netCash / rate) + " $"))),
             React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 6 } }, "\u0643\u0644 \u0627\u0644\u0645\u0628\u0627\u0644\u063A \u0645\u062D\u0648\u0651\u0644\u0629 \u0644\u0644\u064A\u0631\u0629 \u0639\u0644\u0649 \u0633\u0639\u0631 " + fLBP(rate) + ". \u0627\u0644\u0633\u064A\u0648\u0644\u0629 \u063A\u064A\u0631 \u0627\u0644\u0631\u0628\u062D: \u0634\u0631\u0627\u0621 \u0628\u0636\u0627\u0639\u0629 \u0628\u064A\u0637\u0644\u0651\u0639 \u0643\u0627\u0634 \u0628\u0633 \u0645\u0627 \u0628\u064A\u0642\u0644\u0651\u0644 \u0627\u0644\u0631\u0628\u062D.")),
         React.createElement("div", { className: "card", style: issues.length ? { borderColor: 'var(--neg)' } : null },
             React.createElement("div", { className: "sec-h tight" },
