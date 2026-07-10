@@ -521,9 +521,9 @@ input,select,textarea{font-family:inherit;font-size:16px}
 const { useState, useEffect, useMemo, useRef, createContext, useContext } = React;
 /* ============================ STORAGE ============================ */
 const DB_KEY = 'famstore_db_v1';
-const WA_DEFAULT = 'مرحبا {name} 🌹\nهيدا كشف حسابكن لدى {shop}.\nالرصيد المستحق عليكم: {balance}.\nيرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.';
+const WA_DEFAULT = 'مرحبا {name} 🌹\nهيدا كشف حسابكن لدى {shop}.\nرصيدكم عنّا: {balance}.\nيرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.';
 const BROADCAST_DEFAULT = '🎉 عرض خاص من FAM STORE!\nوصلتنا بضاعة جديدة وأسعار منيحة 📱\nمرحبا فيكن تمرقوا عـالمحل. للاستفسار: 71917163';
-const APP_VERSION = 'v22.1 · 2026-07-10 — النسخة المعتمدة (إصلاح زر كلمة سر الحذف)';
+const APP_VERSION = 'v22.2 · 2026-07-10 — توحيد مصطلحات لنا/لكم بكل البرنامج';
 const DEFAULT_SERVICES = () => [{ id: 'whish', name: 'Whish', icon: '💸' }, { id: 'ipick', name: 'iPick', icon: '🎫' }, { id: 'bycel', name: 'ByCel', icon: '📶' }, { id: 'ushare', name: 'Ushare', icon: '🔗' }];
 const USERS_DEFAULT = () => [{ id: 'u_admin', username: 'DAM', password: 'DAM', role: 'admin', active: true, perms: { profit: true, items: true, settings: true, delete: true } }, { id: 'u_fam', username: 'fam', password: 'fam', role: 'cashier', active: true, perms: { profit: false, items: false, settings: false, delete: true } }];
 const blank = () => ({
@@ -581,7 +581,7 @@ function normalize(db) {
         db.users = USERS_DEFAULT();
     db.users = db.users.map((u) => { const ad = u.role === 'admin'; const pr = u.perms || {}; return { id: u.id || uid(), username: u.username, password: u.password, role: ad ? 'admin' : 'cashier', active: u.active !== false, perms: { profit: ad || !!pr.profit, items: ad || !!pr.items, settings: ad || !!pr.settings, delete: pr.delete !== false } }; });
     if (db.settings.waTemplate)
-        db.settings.waTemplate = db.settings.waTemplate.replace('الرصيد المستحق علينا منكن', 'الرصيد المستحق عليكم');
+        db.settings.waTemplate = db.settings.waTemplate.replace('الرصيد المستحق علينا منكن', 'الرصيد المستحق عليكم').replace('الرصيد المستحق عليكم:', 'رصيدكم عنّا:');
     return db;
 }
 function loadDB() { try {
@@ -1099,9 +1099,9 @@ function balText(balL, balU) {
         a.push(fUSD(Math.abs(balU)) + ' $');
     const amt = a.join(' + ');
     if (balL > 0 || balU > 0)
-        return amt;
+        return amt + ' (لنا)';
     if (balL < 0 || balU < 0)
-        return 'دفعة زائدة ' + amt;
+        return amt + ' (لكم — دفعة زائدة)';
     return 'لا يوجد رصيد';
 }
 function parseCSV(text) {
@@ -3290,10 +3290,10 @@ function Customers({ openCust }) {
     const printAll = () => {
         const head = printHeader(db, 'كشف ذمم الزبائن', 'بتاريخ ' + fDate(todayISO()));
         const body = [...rows].sort((a, b) => Math.abs(b.balL) - Math.abs(a.balL)).map((r) => {
-            const stt = (r.balL > 0 || r.balU > 0) ? 'بذمتو إلنا' : (r.balL < 0 || r.balU < 0) ? 'إلو عنا' : 'مسدّد';
+            const stt = (r.balL > 0 || r.balU > 0) ? 'لنا' : (r.balL < 0 || r.balU < 0) ? 'لكم' : 'مسدّد';
             return '<tr><td style="padding:6px">' + esc(r.name) + '</td><td style="padding:6px">' + esc(r.phone || '') + '</td><td style="padding:6px;text-align:center">' + (r.balL ? fLBP(Math.abs(r.balL)) : '—') + '</td><td style="padding:6px;text-align:center">' + (r.balU ? fUSD(Math.abs(r.balU)) : '—') + '</td><td style="padding:6px;text-align:center">' + stt + '</td></tr>';
         }).join('');
-        const html = '<div style="font-family:Cairo,Tahoma,sans-serif;direction:rtl;padding:22px;color:#1a1a1a">' + head + '<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#0b6e4f;color:#fff"><th style="padding:7px;text-align:right">الزبون</th><th style="padding:7px">الهاتف</th><th style="padding:7px">ليرة</th><th style="padding:7px">دولار</th><th style="padding:7px">الحالة</th></tr></thead><tbody>' + body + '</tbody></table><div style="margin-top:14px;padding:12px;background:#eef4f1;border-radius:8px;font-weight:800"><div style="display:flex;justify-content:space-between"><span>إجمالي إلنا (لنا)</span><span style="color:#0b6e4f">' + fLBP(lnaL) + ' ل.ل · ' + fUSD(lnaU) + ' $</span></div><div style="display:flex;justify-content:space-between;margin-top:5px"><span>إجمالي علينا</span><span style="color:#c0392b">' + fLBP(alaL) + ' ل.ل · ' + fUSD(alaU) + ' $</span></div></div></div>';
+        const html = '<div style="font-family:Cairo,Tahoma,sans-serif;direction:rtl;padding:22px;color:#1a1a1a">' + head + '<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#0b6e4f;color:#fff"><th style="padding:7px;text-align:right">الزبون</th><th style="padding:7px">الهاتف</th><th style="padding:7px">ليرة</th><th style="padding:7px">دولار</th><th style="padding:7px">الحالة</th></tr></thead><tbody>' + body + '</tbody></table><div style="margin-top:14px;padding:12px;background:#eef4f1;border-radius:8px;font-weight:800"><div style="display:flex;justify-content:space-between"><span>إجمالي لنا</span><span style="color:#0b6e4f">' + fLBP(lnaL) + ' ل.ل · ' + fUSD(lnaU) + ' $</span></div><div style="display:flex;justify-content:space-between;margin-top:5px"><span>إجمالي لكم</span><span style="color:#c0392b">' + fLBP(alaL) + ' ل.ل · ' + fUSD(alaU) + ' $</span></div></div></div>';
         ui.print({ title: 'كشف ذمم الزبائن', html });
     };
     return React.createElement("div", { className: "page" },
@@ -3301,13 +3301,13 @@ function Customers({ openCust }) {
             React.createElement("div", { className: "label" }, "\uD83D\uDC65 \u0630\u0645\u0645 \u0627\u0644\u0632\u0628\u0627\u0626\u0646"),
             React.createElement("div", { className: "row" },
                 React.createElement("div", { className: "cell" },
-                    React.createElement("div", { className: "cap" }, "\u0625\u0644\u0643 (\u0644\u0646\u0627)"),
+                    React.createElement("div", { className: "cap" }, "\u0644\u0646\u0627 (\u0628\u0630\u0645\u0629 \u0627\u0644\u0632\u0628\u0627\u0626\u0646)"),
                     React.createElement("div", { className: "val num pos", style: { fontSize: 17 } }, fLBP(lnaL)),
                     React.createElement("div", { className: "num pos", style: { fontSize: 12.5 } },
                         fUSD(lnaU),
                         " $")),
                 React.createElement("div", { className: "cell" },
-                    React.createElement("div", { className: "cap" }, "\u0639\u0644\u064A\u0643"),
+                    React.createElement("div", { className: "cap" }, "\u0644\u0643\u0645 (\u0625\u0644\u0646 \u0639\u0646\u0627)"),
                     React.createElement("div", { className: "val num neg", style: { fontSize: 17 } }, fLBP(alaL)),
                     React.createElement("div", { className: "num neg", style: { fontSize: 12.5 } },
                         fUSD(alaU),
@@ -3331,7 +3331,7 @@ function Customers({ openCust }) {
                                 React.createElement("div", { className: "cc-av" }, r.name[0] || '?'),
                                 React.createElement("div", { className: "cc-name" }, r.name),
                                 React.createElement("div", { className: 'cc-bal ' + (owes ? 'neg' : ours ? 'pos' : 'muted') }, ((r.balL ? fLBP(Math.abs(r.balL)) + ' ل.ل' : '') + ((r.balL && r.balU) ? ' · ' : '') + (r.balU ? fUSD(Math.abs(r.balU)) + ' $' : '')) || 'مسدّد ✓'),
-                                React.createElement("div", { className: "cc-sub" }, owes ? 'بذمتو إلك' : ours ? 'إلو عندك' : 'الحساب نظيف'),
+                                React.createElement("div", { className: "cc-sub" }, owes ? 'لنا' : ours ? 'لكم' : 'الحساب نظيف'),
                                 ag != null && React.createElement("div", { className: 'cc-sub ' + (ag > 30 ? 'neg' : 'muted'), style: { fontWeight: 700, fontSize: 11 } },
                                     "\u23F1 \u0645\u0646 ",
                                     ag,
@@ -3355,7 +3355,7 @@ function CustEntry({ kind, preset }) {
     const eL = N(lbp), eU = N(usd);
     const nbL = kind === 'debt' ? bL + eL : bL - eL, nbU = kind === 'debt' ? bU + eU : bU - eU;
     const fmtBal = (l, u) => (l ? fLBP(Math.abs(l)) + ' ل.ل' : '') + ((l && u) ? ' · ' : '') + (u ? fUSD(Math.abs(u)) + ' $' : '');
-    const balWord = (l, u) => (l || u) ? fmtBal(l, u) + ((l > 0 || u > 0) ? ' بذمّتو' : ' إلو عندك') : 'مسدّد ✓';
+    const balWord = (l, u) => (l || u) ? fmtBal(l, u) + ((l > 0 || u > 0) ? ' (لنا)' : ' (لكم)') : 'مسدّد ✓';
     const submit = () => {
         if (!name)
             return ui.toast('اختر الزبون');
@@ -3400,13 +3400,13 @@ function CustEntry({ kind, preset }) {
                     React.createElement("option", { value: "" }, "\u2014 \u0627\u062E\u062A\u0631 \u0627\u0644\u0632\u0628\u0648\u0646 \u2014"),
                     db.customers.map((c) => React.createElement("option", { key: c.id, value: c.name }, c.name)))),
             name && React.createElement("div", { className: 'cust-bal ' + ((bL > 0 || bU > 0) ? 'owes' : (bL < 0 || bU < 0) ? 'credit' : 'clear') },
-                React.createElement("div", { className: "cb-l" }, (bL > 0 || bU > 0) ? '🔴 بذمّتو إلك (دين عليه)' : (bL < 0 || bU < 0) ? '🟢 إلو رصيد عندك' : '✅ الحساب مسدّد — ما عليه شي'),
+                React.createElement("div", { className: "cb-l" }, (bL > 0 || bU > 0) ? '🔴 لنا (دين عليه)' : (bL < 0 || bU < 0) ? '🟢 لكم (رصيد إلو عنا)' : '✅ الحساب مسدّد — ما عليه شي'),
                 (bL || bU) ? React.createElement("div", { className: "cb-a num" }, fmtBal(bL, bU)) : null,
                 (eL || eU) ? React.createElement("div", { className: "cb-after" },
                     "\u2190 \u0628\u0639\u062F ",
                     kind === 'debt' ? 'الدين' : 'التسديد',
                     ": ",
-                    React.createElement("b", { className: "num" }, (nbL || nbU) ? fmtBal(nbL, nbU) + ((nbL > 0 || nbU > 0) ? ' بذمّتو' : ' إلو') : 'مسدّد ✓')) : null),
+                    React.createElement("b", { className: "num" }, (nbL || nbU) ? fmtBal(nbL, nbU) + ((nbL > 0 || nbU > 0) ? ' (لنا)' : ' (لكم)') : 'مسدّد ✓')) : null),
             React.createElement("div", { className: "two" },
                 React.createElement(Field, { label: "\u0644\u064A\u0631\u0629 \u0644.\u0644" },
                     React.createElement(Money, { value: lbp, onChange: setLbp })),
@@ -3449,8 +3449,8 @@ function CustStatement({ cust, back }) {
     const db = useDB();
     const ui = useUI();
     const { ev, tot } = custLedger(db, cust.name);
-    const balStr = ((tot.balL > 0 ? fLBP(tot.balL) + ' ل.ل' : tot.balL < 0 ? 'دفعة زائدة ' + fLBP(-tot.balL) + ' ل.ل' : '')
-        + ((tot.balL > 0 && tot.balU > 0) ? ' و ' : '') + (tot.balU > 0 ? fUSD(tot.balU) + ' $' : '')) || 'لا يوجد رصيد مستحق';
+    const balStr = ((tot.balL > 0 ? fLBP(tot.balL) + ' ل.ل' : tot.balL < 0 ? fLBP(-tot.balL) + ' ل.ل (لكم)' : '')
+        + ((tot.balL > 0 && tot.balU > 0) ? ' و ' : '') + (tot.balU > 0 ? fUSD(tot.balU) + ' $' : '') + ((tot.balL > 0 || tot.balU > 0) ? ' (لنا)' : '')) || 'لا يوجد رصيد مستحق';
     const tmpl = (db.settings.waTemplate || WA_DEFAULT).replace(/\{name\}/g, cust.name).replace(/\{shop\}/g, db.settings.name).replace(/\{balance\}/g, balStr);
     const [msg, setMsg] = useState(tmpl);
     const sendWA = () => { waOpen(cust.phone, msg); ui.toast('عم يفتح واتساب…'); };
@@ -3469,7 +3469,7 @@ function CustStatement({ cust, back }) {
         <tbody>${body || '<tr><td colspan=5 style="text-align:center;padding:14px;color:#999">ما في حركات</td></tr>'}</tbody>
       </table>
       <div style="margin-top:16px;padding:12px;background:#eef4f1;border-radius:8px;display:flex;justify-content:space-between;font-weight:800">
-        <span>الرصيد المستحق علينا منكم</span><span style="color:#c0392b">${balStr}</span></div>
+        <span>الرصيد المستحق</span><span style="color:#c0392b">${balStr}</span></div>
       <div style="margin-top:26px;font-size:11px;color:#999;text-align:center">شكراً لتعاملكم مع ${db.settings.name}</div></div>`;
         ui.print({ title: 'كشف حساب ' + cust.name, html });
     };
