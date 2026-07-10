@@ -489,7 +489,7 @@ const { useState, useEffect, useMemo, useRef, createContext, useContext } = Reac
 const DB_KEY = 'famstore_db_v1';
 const WA_DEFAULT = 'مرحبا {name} 🌹\nهيدا كشف حسابكن لدى {shop}.\nالرصيد المستحق عليكم: {balance}.\nيرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.';
 const BROADCAST_DEFAULT = '🎉 عرض خاص من FAM STORE!\nوصلتنا بضاعة جديدة وأسعار منيحة 📱\nمرحبا فيكن تمرقوا عـالمحل. للاستفسار: 71917163';
-const APP_VERSION = 'v18 · 2026-06-27';
+const APP_VERSION = 'v19 · 2026-07-10 — دفتر يومية + تقارير أرباح دقيقة + فاحص أخطاء';
 const DEFAULT_SERVICES = () => [{ id: 'whish', name: 'Whish', icon: '💸' }, { id: 'ipick', name: 'iPick', icon: '🎫' }, { id: 'bycel', name: 'ByCel', icon: '📶' }, { id: 'ushare', name: 'Ushare', icon: '🔗' }];
 const USERS_DEFAULT = () => [{ id: 'u_admin', username: 'DAM', password: 'DAM', role: 'admin', active: true, perms: { profit: true, items: true, settings: true, delete: true } }, { id: 'u_fam', username: 'fam', password: 'fam', role: 'cashier', active: true, perms: { profit: false, items: false, settings: false, delete: true } }];
 const blank = () => ({
@@ -3588,6 +3588,188 @@ function ClosingCard({ sysL, sysU }) {
                         c.by || '—')),
                 React.createElement("div", { className: "chev" }, "\u203A"))))));
 }
+/* ============================ دفتر اليومية (DAILY JOURNAL) ============================ */
+function dayLedger(db, iso) {
+    const rows = [];
+    const add = (ts, t, s, inL, inU, outL, outU, ref) => rows.push({ ts: N(ts), t, s: s || '', inL: N(inL), inU: N(inU), outL: N(outL), outU: N(outU), ref: ref || '' });
+    const SV = { acc: 'إكسسوارات', mob: 'موبايل', rec: 'تعبئة' };
+    (db.omt || []).filter((x) => sameDay(x.date, iso)).forEach((x) => { if (x.dir === 'IN')
+        add(x.ts, 'حوالة OMT — دخول', '', x.lbp, x.usd, 0, 0, x.ref);
+    else
+        add(x.ts, 'حوالة OMT — خروج', '', 0, 0, x.lbp, x.usd, x.ref); });
+    (db.omtExch || []).filter((x) => sameDay(x.date, iso)).forEach((x) => { if (x.type === 'USD')
+        add(x.ts, 'صرافة — شراء دولار', 'سعر ' + fLBP(x.rate), 0, x.amount, x.total, 0, x.ref);
+    else
+        add(x.ts, 'صرافة — بيع دولار', 'سعر ' + fLBP(x.rate), x.amount, 0, 0, x.total, x.ref); });
+    (db.omtAdj || []).filter((x) => sameDay(x.date, iso)).forEach((x) => { const usd = String(x.type).indexOf('USD') >= 0; const isIn = String(x.type).indexOf('IN') === 0; const a = N(x.amount); add(x.ts, 'تعديل رصيد OMT — ' + x.type, '', isIn && !usd ? a : 0, isIn && usd ? a : 0, !isIn && !usd ? a : 0, !isIn && usd ? a : 0, ''); });
+    ['acc', 'mob', 'rec'].forEach((k) => {
+        (db[k].sales || []).filter((x) => sameDay(x.date, iso)).forEach((x) => add(x.ts, 'بيع ' + SV[k] + ' — ' + x.item, N(x.qty) + ' × ' + mc(x.curr, x.price), x.curr === 'USD' ? 0 : x.total, x.curr === 'USD' ? x.total : 0, 0, 0, ''));
+        (db[k].purchases || []).filter((x) => sameDay(x.date, iso)).forEach((x) => add(x.ts, 'شراء ' + SV[k] + ' — ' + x.item, N(x.qty) + ' × ' + mc(x.curr, x.price), 0, 0, x.curr === 'USD' ? 0 : x.total, x.curr === 'USD' ? x.total : 0, ''));
+    });
+    (db.other || []).filter((x) => sameDay(x.date, iso)).forEach((x) => { const nm = x.svc + (x.item ? ' — ' + x.item : ' — رصيد'); if (x.kind === 'sell')
+        add(x.ts, 'خدمة (بيع) ' + nm, x.item ? '×' + N(x.qty) : '', x.curr === 'USD' ? 0 : x.amount, x.curr === 'USD' ? x.amount : 0, 0, 0, '');
+    else
+        add(x.ts, 'خدمة (شراء) ' + nm, x.item ? '×' + N(x.qty) : '', 0, 0, x.curr === 'USD' ? 0 : x.amount, x.curr === 'USD' ? x.amount : 0, ''); });
+    (db.debts || []).filter((x) => sameDay(x.date, iso)).forEach((x) => add(x.ts, 'دين — ' + x.name, x.desc || '', 0, 0, x.lbp, x.usd, ''));
+    (db.payments || []).filter((x) => sameDay(x.date, iso)).forEach((x) => add(x.ts, 'تسديد — ' + x.name, '', x.lbp, x.usd, 0, 0, ''));
+    (db.supPayments || []).filter((x) => sameDay(x.date, iso)).forEach((x) => add(x.ts, 'دفعة لمورّد — ' + x.name, '', 0, 0, x.lbp, x.usd, ''));
+    (db.supDebts || []).filter((x) => sameDay(x.date, iso)).forEach((x) => add(x.ts, 'بضاعة من مورّد (آجل) — ' + x.name, money2(x.lbp, x.usd) + ' — بلا كاش', 0, 0, 0, 0, ''));
+    (db.revenue || []).filter((x) => sameDay(x.date, iso)).forEach((x) => add(x.ts, 'مدخول — ' + x.item, '', x.lbp, x.usd, 0, 0, ''));
+    (db.expenses || []).filter((x) => sameDay(x.date, iso)).forEach((x) => add(x.ts, 'مصروف — ' + x.item, x.cat || '', 0, 0, x.lbp, x.usd, ''));
+    rows.sort((a, b) => a.ts - b.ts);
+    const T = { inL: 0, inU: 0, outL: 0, outU: 0 };
+    rows.forEach((r) => { T.inL += r.inL; T.inU += r.inU; T.outL += r.outL; T.outU += r.outU; });
+    return { rows, T };
+}
+function DailyJournal() {
+    const db = useDB();
+    const ui = useUI();
+    const [date, setDate] = useState(todayISO());
+    const shift = (d) => { const x = new Date(date + 'T12:00:00'); x.setDate(x.getDate() + d); setDate(x.toISOString().slice(0, 10)); };
+    const led = dayLedger(db, date);
+    const feed = buildFeed(db).filter((x) => sameDay(x.date, date));
+    const openItem = (it) => { const sp = it.etype ? mkEdit(db, it.etype, it.erec) : null; ui.detail({ title: it.t, rows: it.rows, onDelete: it.del, receipt: it.receipt, edit: sp ? { spec: sp, rec: it.erec } : null }); };
+    const netL = led.T.inL - led.T.outL, netU = led.T.inU - led.T.outU;
+    const printDay = () => {
+        const head = printHeader(db, 'دفتر اليومية', fDate(date));
+        const tm = (ts) => { if (!N(ts))
+            return '—'; const d = new Date(N(ts)); const p = (n) => String(n).padStart(2, '0'); return p(d.getHours()) + ':' + p(d.getMinutes()); };
+        const cell = (v, extra) => '<td style="padding:5px 6px;border:1px solid #ddd;font-size:11px;' + (extra || '') + '">' + v + '</td>';
+        let body = '';
+        led.rows.forEach((r, i) => {
+            body += '<tr>' + cell(String(i + 1)) + cell(tm(r.ts)) + cell(r.t + (r.s ? '<div style="font-size:9px;color:#777">' + r.s + '</div>' : ''), 'text-align:right') + cell(r.inL ? fLBP(r.inL) : '—', 'text-align:left;color:#0b6e4f') + cell(r.inU ? fUSD(r.inU) : '—', 'text-align:left;color:#0b6e4f') + cell(r.outL ? fLBP(r.outL) : '—', 'text-align:left;color:#b91c1c') + cell(r.outU ? fUSD(r.outU) : '—', 'text-align:left;color:#b91c1c') + '</tr>';
+        });
+        const th = (v) => '<th style="padding:6px;border:1px solid #ccc;background:#f2f7f4;font-size:11px">' + v + '</th>';
+        const tot = '<tr style="font-weight:800;background:#fafafa">' + cell('') + cell('') + cell('المجموع', 'text-align:right') + cell(fLBP(led.T.inL), 'text-align:left;color:#0b6e4f') + cell(fUSD(led.T.inU), 'text-align:left;color:#0b6e4f') + cell(fLBP(led.T.outL), 'text-align:left;color:#b91c1c') + cell(fUSD(led.T.outU), 'text-align:left;color:#b91c1c') + '</tr>' +
+            '<tr style="font-weight:900">' + cell('') + cell('') + cell('صافي الحركة', 'text-align:right') + cell(fLBP(netL), 'text-align:left') + cell(fUSD(netU), 'text-align:left') + cell('') + cell('') + '</tr>';
+        ui.print({ title: 'دفتر اليومية', html: '<div style="font-family:Cairo,Tahoma,sans-serif;direction:rtl;padding:20px;color:#1a1a1a">' + head + '<table style="width:100%;border-collapse:collapse"><thead><tr>' + th('#') + th('الوقت') + th('العملية') + th('داخل ل.ل') + th('داخل $') + th('خارج ل.ل') + th('خارج $') + '</tr></thead><tbody>' + body + tot + '</tbody></table><div style="margin-top:10px;font-size:11px;color:#777">عدد العمليات: ' + led.rows.length + ' · طُبع بتاريخ ' + fDate(todayISO()) + '</div></div>' });
+    };
+    return React.createElement("div", { className: "page" },
+        React.createElement("div", { className: "hero compact" },
+            React.createElement("div", { className: "label" }, "\uD83D\uDCD3 \u062F\u0641\u062A\u0631 \u0627\u0644\u064A\u0648\u0645\u064A\u0629 \u2014 \u0643\u0644 \u062D\u0631\u0643\u0627\u062A \u0627\u0644\u064A\u0648\u0645"),
+            React.createElement("div", { className: "row" },
+                React.createElement("div", { className: "cell" },
+                    React.createElement("div", { className: "cap" }, "\u062F\u0627\u062E\u0644 (\u0645\u0642\u0628\u0648\u0636\u0627\u062A)"),
+                    React.createElement("div", { className: "val num" }, fLBP(led.T.inL) + ' · ' + fUSD(led.T.inU) + '$')),
+                React.createElement("div", { className: "cell" },
+                    React.createElement("div", { className: "cap" }, "\u062E\u0627\u0631\u062C (\u0645\u062F\u0641\u0648\u0639\u0627\u062A)"),
+                    React.createElement("div", { className: "val num" }, fLBP(led.T.outL) + ' · ' + fUSD(led.T.outU) + '$')))),
+        React.createElement("div", { className: "card", style: { marginTop: 13 } },
+            React.createElement("div", { className: "btn-row" },
+                React.createElement("button", { className: "btn btn-ghost btn-sm", onClick: () => shift(-1) }, "\u25C0 \u0627\u0644\u064A\u0648\u0645 \u0627\u0644\u0633\u0627\u0628\u0642"),
+                React.createElement("input", { type: "date", value: date, onChange: (e) => setDate(e.target.value), style: { flex: 1 } }),
+                React.createElement("button", { className: "btn btn-ghost btn-sm", onClick: () => shift(1) }, "\u0627\u0644\u064A\u0648\u0645 \u0627\u0644\u062A\u0627\u0644\u064A \u25B6")),
+            date !== todayISO() && React.createElement("button", { className: "btn btn-ghost btn-sm", style: { marginTop: 8 }, onClick: () => setDate(todayISO()) }, "\u21A9\uFE0E \u0631\u062C\u0648\u0639 \u0644\u0644\u064A\u0648\u0645")),
+        React.createElement("div", { className: "card" },
+            React.createElement("div", { className: "sec-h tight" },
+                React.createElement("div", { className: "bar" }),
+                React.createElement("h2", null, "\u0645\u0644\u062E\u0635 " + fDate(date)),
+                React.createElement("span", { className: "right num" }, led.rows.length + " \u0639\u0645\u0644\u064A\u0629")),
+            React.createElement("div", { className: "kv" },
+                React.createElement("div", { className: "k" }, "\u0635\u0627\u0641\u064A \u062D\u0631\u0643\u0629 \u0627\u0644\u0644\u064A\u0631\u0629"),
+                React.createElement("div", { className: 'v num ' + (netL >= 0 ? 'pos' : 'neg') }, fLBP(netL) + ' \u0644.\u0644')),
+            React.createElement("div", { className: "kv" },
+                React.createElement("div", { className: "k" }, "\u0635\u0627\u0641\u064A \u062D\u0631\u0643\u0629 \u0627\u0644\u062F\u0648\u0644\u0627\u0631"),
+                React.createElement("div", { className: 'v num ' + (netU >= 0 ? 'pos' : 'neg') }, fUSD(netU) + ' $'))),
+        feed.length === 0 ? React.createElement(Empty, { ic: "\uD83D\uDCD3", t: "\u0645\u0627 \u0641\u064A \u062D\u0631\u0643\u0627\u062A \u0628\u0647\u0627\u0644\u064A\u0648\u0645" }) :
+            React.createElement("div", { className: "card" },
+                React.createElement("div", { className: "sec-h tight" },
+                    React.createElement("div", { className: "bar" }),
+                    React.createElement("h2", null, "\u0643\u0644 \u0627\u0644\u062D\u0631\u0643\u0627\u062A")),
+                React.createElement("div", { className: "list" }, feed.map((x) => React.createElement(Row, { key: x.id, ic: x.ic, bg: x.bg, c: x.c, name: x.t, sub: x.s + ' \u00B7 ' + relTime(x.ts, x.date), onClick: () => openItem(x) })))),
+        React.createElement("button", { className: "btn btn-gold", onClick: printDay }, "\uD83D\uDDA8 \u0637\u0628\u0627\u0639\u0629 \u062F\u0641\u062A\u0631 \u0627\u0644\u064A\u0648\u0645 (PDF)"));
+}
+/* ============================ ربح الفترة الدقيق + فاحص الأخطاء ============================ */
+function rangeProfit(db, from, to) {
+    const rate = N(db.settings.rate) || 1;
+    const toL = (c, v) => c === 'USD' ? N(v) * rate : N(v);
+    const inR = (d) => { const x = String(d || '').slice(0, 10); return x >= from && x <= to; };
+    let cogsProfit = 0, cogs = 0, unkSaleL = 0;
+    ['acc', 'mob', 'rec'].forEach((k) => {
+        const st = invStats(db[k], rate);
+        const avg = {};
+        st.rows.forEach((r) => { avg[r.name] = r.qtyP ? r.costL / r.qtyP : null; });
+        (db[k].sales || []).filter((x) => inR(x.date)).forEach((x) => { const a = avg[x.item]; const sv = toL(x.curr, x.total); if (a == null) {
+            unkSaleL += sv;
+        }
+        else {
+            cogs += N(x.qty) * a;
+            cogsProfit += sv - N(x.qty) * a;
+        } });
+    });
+    let svcItemP = 0;
+    (db.other || []).filter((x) => inR(x.date) && x.kind === 'sell' && x.item).forEach((x) => { svcItemP += toL(x.curr, x.total || x.amount) - toL(x.curr, x.cost != null ? x.cost : 0); });
+    let bUsd = 0, bLbp = 0;
+    (db.omtExch || []).forEach((x) => { if (x.type === 'USD') {
+        bUsd += N(x.amount);
+        bLbp += N(x.total);
+    } });
+    const avgBuy = bUsd ? bLbp / bUsd : (N(db.settings.rateBuy) || rate);
+    let exchP = 0, usdSold = 0;
+    (db.omtExch || []).filter((x) => inR(x.date) && x.type === 'LBP').forEach((x) => { exchP += N(x.total) * (N(x.rate) - avgBuy); usdSold += N(x.total); });
+    return { cogsProfit, cogs, svcItemP, exchP, avgBuy, usdSold, unkSaleL };
+}
+function dataIssues(db) {
+    const out = [];
+    const t = todayISO();
+    const push = (sev, title, sub) => out.push({ sev, t: title, s: sub || '' });
+    const dup = (arr, label, keyFn, descFn) => { const m = {}; (arr || []).forEach((x) => { const k = keyFn(x); if (!k)
+        return; (m[k] = m[k] || []).push(x); }); Object.keys(m).forEach((k) => { const g = m[k]; if (g.length > 1)
+        push('dup', 'تكرار محتمل ×' + g.length + ' — ' + label, descFn(g[0])); }); };
+    const D = (x) => fDate(x.date);
+    dup(db.omt, 'حوالة OMT', (x) => x.dir + '|' + String(x.date).slice(0, 10) + '|' + N(x.lbp) + '|' + N(x.usd), (x) => (x.dir === 'IN' ? 'دخول ' : 'خروج ') + money2(x.lbp, x.usd) + ' · ' + D(x));
+    dup(db.omtExch, 'صرافة', (x) => x.type + '|' + String(x.date).slice(0, 10) + '|' + N(x.amount) + '|' + N(x.rate), (x) => (x.type === 'USD' ? fUSD(x.amount) + '$' : fLBP(x.amount)) + ' بسعر ' + fLBP(x.rate) + ' · ' + D(x));
+    const SV = { acc: 'إكسسوارات', mob: 'موبايل', rec: 'تعبئة' };
+    ['acc', 'mob', 'rec'].forEach((k) => {
+        dup(db[k].sales, 'بيع ' + SV[k], (x) => x.item + '|' + N(x.qty) + '|' + N(x.total) + '|' + String(x.date).slice(0, 10), (x) => x.item + ' ×' + N(x.qty) + ' = ' + mc(x.curr, x.total) + ' · ' + D(x));
+        dup(db[k].purchases, 'شراء ' + SV[k], (x) => x.item + '|' + N(x.qty) + '|' + N(x.total) + '|' + String(x.date).slice(0, 10), (x) => x.item + ' ×' + N(x.qty) + ' = ' + mc(x.curr, x.total) + ' · ' + D(x));
+    });
+    dup(db.other, 'خدمات', (x) => x.svc + '|' + (x.item || '') + '|' + x.kind + '|' + N(x.amount) + '|' + String(x.date).slice(0, 10), (x) => x.svc + (x.item ? ' — ' + x.item : ' — رصيد') + ' ' + mc(x.curr, x.amount) + ' · ' + D(x));
+    dup(db.debts, 'دين', (x) => x.name + '|' + N(x.lbp) + '|' + N(x.usd) + '|' + String(x.date).slice(0, 10), (x) => x.name + ' ' + money2(x.lbp, x.usd) + ' · ' + D(x));
+    dup(db.payments, 'تسديد', (x) => x.name + '|' + N(x.lbp) + '|' + N(x.usd) + '|' + String(x.date).slice(0, 10), (x) => x.name + ' ' + money2(x.lbp, x.usd) + ' · ' + D(x));
+    dup(db.revenue, 'مدخول', (x) => x.item + '|' + N(x.lbp) + '|' + N(x.usd) + '|' + String(x.date).slice(0, 10), (x) => x.item + ' ' + money2(x.lbp, x.usd) + ' · ' + D(x));
+    dup(db.expenses, 'مصروف', (x) => x.item + '|' + N(x.lbp) + '|' + N(x.usd) + '|' + String(x.date).slice(0, 10), (x) => x.item + ' ' + money2(x.lbp, x.usd) + ' · ' + D(x));
+    dup(db.supPayments, 'دفعة مورّد', (x) => x.name + '|' + N(x.lbp) + '|' + N(x.usd) + '|' + String(x.date).slice(0, 10), (x) => x.name + ' ' + money2(x.lbp, x.usd) + ' · ' + D(x));
+    /* قيم صفر */
+    (db.omt || []).forEach((x) => { if (N(x.lbp) + N(x.usd) === 0)
+        push('warn', 'حوالة OMT بقيمة صفر', D(x)); });
+    (db.other || []).forEach((x) => { if (N(x.amount) === 0)
+        push('warn', 'عملية خدمة بقيمة صفر — ' + x.svc, D(x)); });
+    ['acc', 'mob', 'rec'].forEach((k) => { (db[k].sales || []).concat(db[k].purchases || []).forEach((x) => { if (N(x.total) === 0 || N(x.qty) === 0)
+        push('warn', 'حركة ' + SV[k] + ' بقيمة/كمية صفر — ' + x.item, D(x)); }); });
+    (db.debts || []).concat(db.payments || []).forEach((x) => { if (N(x.lbp) + N(x.usd) === 0)
+        push('warn', 'دين/تسديد بقيمة صفر — ' + (x.name || '؟'), D(x)); });
+    (db.revenue || []).concat(db.expenses || []).forEach((x) => { if (N(x.lbp) + N(x.usd) === 0)
+        push('warn', 'مدخول/مصروف بقيمة صفر — ' + (x.item || '؟'), D(x)); });
+    /* مخزون بالسالب = مبيع أكتر من الشراء المسجّل */
+    ['acc', 'mob', 'rec'].forEach((k) => invStats(db[k], db.settings.rate).rows.forEach((r) => { if ((r.qtyP + r.qtyS) > 0 && r.stock < 0)
+        push('err', 'مخزون بالسالب — ' + SV[k] + ': ' + r.name, 'مبيع ' + r.qtyS + ' وشراء ' + r.qtyP + ' — يعني في بيع مكرر أو شراء مش مسجّل، والربح المحسوب لهالصنف مش دقيق'); }));
+    /* تواريخ بالمستقبل */
+    const fut = (arr, label) => (arr || []).forEach((x) => { const d = String(x.date || '').slice(0, 10); if (d > t)
+        push('warn', 'تاريخ بالمستقبل — ' + label, fDate(d)); });
+    fut(db.omt, 'حوالة OMT');
+    fut(db.omtExch, 'صرافة');
+    fut(db.debts, 'دين');
+    fut(db.payments, 'تسديد');
+    fut(db.revenue, 'مدخول');
+    fut(db.expenses, 'مصروف');
+    ['acc', 'mob', 'rec'].forEach((k) => { fut(db[k].sales, 'بيع ' + SV[k]); fut(db[k].purchases, 'شراء ' + SV[k]); });
+    /* سعر صرف شاذ */
+    const rate = N(db.settings.rate) || 1;
+    (db.omtExch || []).forEach((x) => { const r = N(x.rate); if (r > 0 && Math.abs(r - rate) / rate > 0.25)
+        push('warn', 'سعر صرف شاذ — ' + fLBP(r), 'بعيد كتير عن سعر اليوم (' + fLBP(rate) + ') · ' + D(x) + ' — يمكن غلط كتابة'); });
+    /* أسماء مش مسجلة بالزبائن (احتمال غلط إملائي = زبون مكرر باسمين) */
+    const known = new Set((db.customers || []).map((c) => c.name));
+    const seen = new Set();
+    (db.debts || []).concat(db.payments || []).forEach((x) => { if (x.name && !known.has(x.name) && !seen.has(x.name)) {
+        seen.add(x.name);
+        push('warn', 'اسم مش مسجّل بالزبائن — ' + x.name, 'في دين/تسديد عليه بس مش بقائمة الزبائن — يمكن غلط إملائي وصار عندك نفس الزبون باسمين');
+    } });
+    /* زبائن دافعين زيادة */
+    custBalances(db).rows.forEach((r) => { if (r.balL < -0.01 || r.balU < -0.01)
+        push('warn', 'زبون دافع زيادة — ' + r.name, 'رصيده بالسالب: ' + money2(r.balL, r.balU) + ' — يا دين ناقص تسجيل يا تسديد مكرر'); });
+    return out;
+}
 function Reports() {
     const db = useDB();
     const { can } = useRole();
@@ -3643,6 +3825,14 @@ function Reports() {
     db.other.filter((x) => inR(x.date)).forEach((x) => { const v = toL(x.curr, x.amount || x.total || 0); svcVol[x.svc] = (svcVol[x.svc] || 0) + v; });
     const topSvc = Object.entries(svcVol).sort((a, b) => b[1] - a[1]).slice(0, 5);
     const topCust = (custBalances(db).rows || []).filter((c) => c.balL > 0).sort((a, b) => b.balL - a.balL).slice(0, 5);
+    const rp = rangeProfit(db, from, to);
+    const issues = dataIssues(db);
+    let supPayRL = 0, supPayRU = 0;
+    (db.supPayments || []).filter((x) => inR(x.date)).forEach((x) => { supPayRL += N(x.lbp); supPayRU += N(x.usd); });
+    const cashIn = saleL + payL + payU * rate + svcSell + revL + oInL + oInU * rate;
+    const cashOut = costL + svcBuy + expL + debtL + debtU * rate + supPayRL + supPayRU * rate + oOutL + oOutU * rate;
+    const netCash = cashIn - cashOut;
+    const netP2 = rp.cogsProfit + rp.svcItemP + rp.exchP + revL - expL;
     const kv = (k, v, cls) => React.createElement("div", { className: "kv" },
         React.createElement("div", { className: "k" }, k),
         React.createElement("div", { className: 'v num ' + (cls || '') }, v));
@@ -3652,7 +3842,11 @@ function Reports() {
         let rows = row('إجمالي المبيعات', fLBP(saleL) + ' ل.ل') + row('عدد عمليات البيع', String(nSale));
         if (showP)
             rows += row('إجمالي المشتريات', fLBP(costL) + ' ل.ل') + row('الربح التقريبي', fLBP(profit) + ' ل.ل');
-        rows += row('OMT دخل', fLBP(oInL) + ' ل.ل · ' + fUSD(oInU) + '$') + row('OMT طلع', fLBP(oOutL) + ' ل.ل · ' + fUSD(oOutU) + '$') + row('خدمات بيع', fLBP(svcSell) + ' ل.ل') + row('خدمات شراء', fLBP(svcBuy) + ' ل.ل') + row('ديون أُعطيت', fLBP(debtL) + ' ل.ل · ' + fUSD(debtU) + '$') + row('تسديدات', fLBP(payL) + ' ل.ل · ' + fUSD(payU) + '$') + row('مداخيل', fLBP(revL) + ' ل.ل') + row('مصاريف', fLBP(expL) + ' ل.ل');
+        if (showP)
+            rows += row('الربح الدقيق (بعد كلفة البضاعة المباعة)', fLBP(rp.cogsProfit) + ' ل.ل') + row('ربح أصناف الخدمات', fLBP(rp.svcItemP) + ' ل.ل') + row('ربح الصرافة (تقريبي)', fLBP(rp.exchP) + ' ل.ل');
+        rows += row('OMT دخل', fLBP(oInL) + ' ل.ل · ' + fUSD(oInU) + '$') + row('OMT طلع', fLBP(oOutL) + ' ل.ل · ' + fUSD(oOutU) + '$') + row('خدمات بيع', fLBP(svcSell) + ' ل.ل') + row('خدمات شراء', fLBP(svcBuy) + ' ل.ل') + row('ديون أُعطيت', fLBP(debtL) + ' ل.ل · ' + fUSD(debtU) + '$') + row('تسديدات', fLBP(payL) + ' ل.ل · ' + fUSD(payU) + '$') + row('مداخيل', fLBP(revL) + ' ل.ل') + row('مصاريف', fLBP(expL) + ' ل.ل') + row('دفعات موردين', fLBP(supPayRL) + ' ل.ل · ' + fUSD(supPayRU) + '$') + row('صافي حركة الكاش', fLBP(netCash) + ' ل.ل');
+        if (showP)
+            rows += '<tr><td style="padding:8px;border-top:2px solid #0b6e4f;font-weight:900">صافي ربح الفترة</td><td style="padding:8px;border-top:2px solid #0b6e4f;text-align:left;font-weight:900;color:#0b6e4f">' + fLBP(netP2) + ' ل.ل</td></tr>';
         ui.print({ title: 'تقرير الفترة', html: '<div style="font-family:Cairo,Tahoma,sans-serif;direction:rtl;padding:22px;color:#1a1a1a">' + head + '<table style="width:100%;border-collapse:collapse;font-size:13px">' + rows + '</table></div>' });
     };
     const ui = useUI();
@@ -3684,7 +3878,8 @@ function Reports() {
             kv('إجمالي المبيعات', fLBP(saleL) + ' ل.ل', 'pos'),
             kv('عدد عمليات البيع', String(nSale)),
             showP && kv('إجمالي المشتريات (كلفة)', fLBP(costL) + ' ل.ل'),
-            showP && kv('الربح التقريبي (مبيعات − مشتريات)', fLBP(profit) + ' ل.ل', profit >= 0 ? 'pos' : 'neg')),
+            showP && kv('الربح التقريبي (مبيعات − مشتريات)', fLBP(profit) + ' ل.ل', profit >= 0 ? 'pos' : 'neg'),
+            showP && kv('الربح الدقيق (مبيعات − كلفة البضاعة المباعة)', fLBP(rp.cogsProfit) + ' ل.ل', rp.cogsProfit >= 0 ? 'pos' : 'neg')),
         React.createElement("div", { className: "card" },
             React.createElement("div", { className: "sec-h tight" },
                 React.createElement("div", { className: "bar" }),
@@ -3722,16 +3917,43 @@ function Reports() {
             React.createElement("div", { className: "sec-h tight" },
                 React.createElement("div", { className: "bar" }),
                 React.createElement("h2", null, "\uD83D\uDCB0 \u0635\u0627\u0641\u064A \u0627\u0644\u0631\u0628\u062D \u0627\u0644\u062A\u0642\u0631\u064A\u0628\u064A")),
-            kv('ربح المبيعات', fLBP(profit) + ' ل.ل'),
-            kv('ربح الخدمات', fLBP(svcSell - svcBuy) + ' ل.ل'),
+            kv('ربح المبيعات (بعد كلفة البضاعة المباعة)', fLBP(rp.cogsProfit) + ' ل.ل', rp.cogsProfit >= 0 ? 'pos' : 'neg'),
+            kv('ربح أصناف الخدمات', fLBP(rp.svcItemP) + ' ل.ل', rp.svcItemP >= 0 ? 'pos' : 'neg'),
+            kv('ربح الصرافة (تقريبي)', fLBP(rp.exchP) + ' ل.ل', rp.exchP >= 0 ? 'pos' : 'neg'),
             kv('مداخيل', fLBP(revL) + ' ل.ل'),
             kv('مصاريف', '− ' + fLBP(expL) + ' ل.ل', 'neg'),
             React.createElement("div", { className: "kv", style: { borderTop: '2px solid var(--brand)', marginTop: 6, paddingTop: 9 } },
-                React.createElement("div", { className: "k", style: { fontWeight: 800 } }, "\u0627\u0644\u0635\u0627\u0641\u064A"),
-                React.createElement("div", { className: 'v num ' + (netP >= 0 ? 'pos' : 'neg'), style: { fontSize: 18 } },
-                    fLBP(netP),
+                React.createElement("div", { className: "k", style: { fontWeight: 800 } }, "\u0635\u0627\u0641\u064A \u0631\u0628\u062D \u0627\u0644\u0641\u062A\u0631\u0629"),
+                React.createElement("div", { className: 'v num ' + (netP2 >= 0 ? 'pos' : 'neg'), style: { fontSize: 18 } },
+                    fLBP(netP2),
                     " \u0644.\u0644")),
-            React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 6 } }, "\u0631\u0628\u062D \u0627\u0644\u0635\u0631\u0627\u0641\u0629 \u0645\u0646 \u0641\u0631\u0642 \u0627\u0644\u0634\u0631\u0627\u0621/\u0627\u0644\u0628\u064A\u0639 \u0645\u0634 \u0645\u062D\u0633\u0648\u0628 \u0647\u0648\u0646.")),
+            rp.unkSaleL > 0 && React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 6, color: 'var(--neg)' } }, "\u26A0\uFE0F \u0641\u064A \u0645\u0628\u064A\u0639\u0627\u062A \u0628\u0642\u064A\u0645\u0629 " + fLBP(rp.unkSaleL) + " \u0644.\u0644 \u0644\u0623\u0635\u0646\u0627\u0641 \u0628\u0644\u0627 \u0634\u0631\u0627\u0621 \u0645\u0633\u062C\u0651\u0644 \u2014 \u0645\u0627 \u0642\u062F\u0631\u0646\u0627 \u0646\u062D\u0633\u0628 \u0631\u0628\u062D\u0647\u0627 (\u0634\u0648\u0641 \u0641\u062D\u0635 \u0627\u0644\u0623\u062E\u0637\u0627\u0621 \u062A\u062D\u062A)."),
+            React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 6 } }, "\u0631\u0628\u062D \u0627\u0644\u0635\u0631\u0627\u0641\u0629 \u0645\u062D\u0633\u0648\u0628 \u0639\u0644\u0649 \u0645\u0639\u062F\u0644 \u0634\u0631\u0627\u0621 \u0627\u0644\u062F\u0648\u0644\u0627\u0631 (" + fLBP(rp.avgBuy) + ") \u00D7 \u0627\u0644\u062F\u0648\u0644\u0627\u0631 \u0627\u0644\u0645\u0628\u0627\u0639 \u0628\u0627\u0644\u0641\u062A\u0631\u0629. \u0641\u0631\u0642 \u0631\u0635\u064A\u062F \u0627\u0644\u062E\u062F\u0645\u0627\u062A (\u0628\u064A\u0639 \u2212 \u062A\u0639\u0628\u0626\u0629 = " + fLBP(svcSell - svcBuy) + " \u0644.\u0644) \u0645\u0634 \u0645\u062D\u0633\u0648\u0628 \u0644\u0623\u0646\u0648 \u062D\u0631\u0643\u0629 \u0631\u0635\u064A\u062F \u0645\u0634 \u0631\u0628\u062D.")),
+        showP && React.createElement("div", { className: "card" },
+            React.createElement("div", { className: "sec-h tight" },
+                React.createElement("div", { className: "bar" }),
+                React.createElement("h2", null, "\uD83D\uDCB5 \u0627\u0644\u0633\u064A\u0648\u0644\u0629 \u2014 \u062D\u0631\u0643\u0629 \u0627\u0644\u0643\u0627\u0634 \u0628\u0627\u0644\u0641\u062A\u0631\u0629")),
+            kv('كاش داخل (مبيعات + تسديدات + خدمات + مداخيل + OMT)', fLBP(cashIn) + ' ل.ل', 'pos'),
+            kv('كاش خارج (مشتريات + مصاريف + ديون + موردين + OMT)', fLBP(cashOut) + ' ل.ل', 'neg'),
+            React.createElement("div", { className: "kv", style: { borderTop: '2px solid var(--line, #ddd)', marginTop: 6, paddingTop: 9 } },
+                React.createElement("div", { className: "k", style: { fontWeight: 800 } }, "\u0635\u0627\u0641\u064A \u062D\u0631\u0643\u0629 \u0627\u0644\u0643\u0627\u0634"),
+                React.createElement("div", { className: 'v num ' + (netCash >= 0 ? 'pos' : 'neg'), style: { fontSize: 17 } },
+                    fLBP(netCash),
+                    " \u0644.\u0644")),
+            React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 6 } }, "\u0643\u0644 \u0627\u0644\u0645\u0628\u0627\u0644\u063A \u0645\u062D\u0648\u0651\u0644\u0629 \u0644\u0644\u064A\u0631\u0629 \u0639\u0644\u0649 \u0633\u0639\u0631 " + fLBP(rate) + ". \u0627\u0644\u0633\u064A\u0648\u0644\u0629 \u063A\u064A\u0631 \u0627\u0644\u0631\u0628\u062D: \u0634\u0631\u0627\u0621 \u0628\u0636\u0627\u0639\u0629 \u0628\u064A\u0637\u0644\u0651\u0639 \u0643\u0627\u0634 \u0628\u0633 \u0645\u0627 \u0628\u064A\u0642\u0644\u0651\u0644 \u0627\u0644\u0631\u0628\u062D.")),
+        React.createElement("div", { className: "card", style: issues.length ? { borderColor: 'var(--neg)' } : null },
+            React.createElement("div", { className: "sec-h tight" },
+                React.createElement("div", { className: "bar" }),
+                React.createElement("h2", null, "\uD83D\uDD0D \u0641\u062D\u0635 \u0627\u0644\u0623\u062E\u0637\u0627\u0621 \u0648\u0627\u0644\u062A\u0643\u0631\u0627\u0631"),
+                React.createElement("span", { className: 'right num ' + (issues.length ? 'neg' : 'pos') }, issues.length ? issues.length + ' ملاحظة' : '\u2713')),
+            issues.length === 0 ? React.createElement("div", { className: "hint", style: { textAlign: 'right' } }, "\u0645\u0627 \u0644\u0642\u064A\u0646\u0627 \u0648\u0644\u0627 \u0645\u0644\u0627\u062D\u0638\u0629 \u2014 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0646\u0638\u064A\u0641\u0629 \u2705") :
+                React.createElement(React.Fragment, null,
+                    issues.slice(0, 40).map((x, i) => React.createElement("div", { key: i, className: "kv" },
+                        React.createElement("div", { className: "k" },
+                            React.createElement("span", { style: { fontWeight: 800, color: x.sev === 'err' ? 'var(--neg)' : x.sev === 'dup' ? 'var(--gold)' : 'var(--muted)' } }, (x.sev === 'err' ? '\uD83D\uDED1 ' : x.sev === 'dup' ? '\uD83D\uDC6F ' : '\u26A0\uFE0F ') + x.t),
+                            x.s && React.createElement("div", { style: { fontSize: 11, color: 'var(--muted)', marginTop: 2 } }, x.s)))),
+                    issues.length > 40 && React.createElement("div", { className: "hint", style: { textAlign: 'right' } }, "\u0648\u0641\u064A " + (issues.length - 40) + " \u0645\u0644\u0627\u062D\u0638\u0629 \u0643\u0645\u0627\u0646\u2026"),
+                    React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 6 } }, "\u0627\u0644\u0641\u062D\u0635 \u0628\u064A\u0634\u0645\u0644 \u0643\u0644 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A (\u0645\u0634 \u0628\u0633 \u0627\u0644\u0641\u062A\u0631\u0629): \u062A\u0643\u0631\u0627\u0631\u060C \u0642\u064A\u0645 \u0635\u0641\u0631\u060C \u0645\u062E\u0632\u0648\u0646 \u0628\u0627\u0644\u0633\u0627\u0644\u0628\u060C \u062A\u0648\u0627\u0631\u064A\u062E \u0628\u0627\u0644\u0645\u0633\u062A\u0642\u0628\u0644\u060C \u0623\u0633\u0639\u0627\u0631 \u0635\u0631\u0641 \u0634\u0627\u0630\u0629\u060C \u0623\u0633\u0645\u0627\u0621 \u0632\u0628\u0627\u0626\u0646 \u0645\u0634 \u0645\u0633\u062C\u0651\u0644\u0629. \u0644\u0644\u062D\u0630\u0641 \u0623\u0648 \u0627\u0644\u062A\u0639\u062F\u064A\u0644 \u0631\u0648\u062D \u0639\u0627\u0644\u062D\u0631\u0643\u0629 \u0646\u0641\u0633\u0627 \u0645\u0646 \u062F\u0641\u062A\u0631 \u0627\u0644\u064A\u0648\u0645\u064A\u0629 \u0623\u0648 \u0635\u0641\u062D\u062A\u0627."))),
         (topSvc.length > 0 || topCust.length > 0) && React.createElement("div", { className: "card" },
             React.createElement("div", { className: "sec-h tight" },
                 React.createElement("div", { className: "bar" }),
@@ -4199,7 +4421,7 @@ function Settings({ onLogout, go }) {
             role === 'admin' ? 'أدمن' : 'كاشير'));
 }
 /* ============================ APP ROOT ============================ */
-const TITLES = { dash: 'الرئيسية', box: 'الصندوق', omt: 'حوالات OMT', acc: 'إكسسوارات', mob: 'موبايل', rec: 'تعبئة رصيد', services: 'الخدمات', service: 'خدمة', cust: 'زبائن وديون', cust_stmt: 'كشف حساب', suppliers: 'الموردين', rev: 'مداخيل/مصاريف', invoice: 'فاتورة', omtcus: 'هويات OMT', calc: 'حاسبة', contacts: 'دفتر العناوين', reports: 'تقارير الفترة', audit: 'سجل العمليات', users: 'المستخدمين', settings: 'الإعدادات', cloudlog: 'سجل سحابي تجريبي' };
+const TITLES = { dash: 'الرئيسية', box: 'الصندوق', omt: 'حوالات OMT', acc: 'إكسسوارات', mob: 'موبايل', rec: 'تعبئة رصيد', services: 'الخدمات', service: 'خدمة', cust: 'زبائن وديون', cust_stmt: 'كشف حساب', suppliers: 'الموردين', rev: 'مداخيل/مصاريف', invoice: 'فاتورة', omtcus: 'هويات OMT', calc: 'حاسبة', contacts: 'دفتر العناوين', daily: 'دفتر اليومية', reports: 'تقارير الفترة', audit: 'سجل العمليات', users: 'المستخدمين', settings: 'الإعدادات', cloudlog: 'سجل سحابي تجريبي' };
 function LockScreen({ user, onUnlock, onLogout }) {
     const db = useDB();
     const [p, setP] = useState(''), [err, setErr] = useState('');
@@ -4298,6 +4520,9 @@ function Shell() {
         case 'contacts':
             body = React.createElement(AddressBook, null);
             break;
+        case 'daily':
+            body = React.createElement(DailyJournal, null);
+            break;
         case 'reports':
             body = React.createElement(Reports, null);
             break;
@@ -4313,7 +4538,7 @@ function Shell() {
         default: body = React.createElement(Dashboard, { go: go });
     }
     const navItems = [['dash', '🏠', 'رئيسية'], ['omt', '💱', 'OMT'], ['box', '📒', 'الصندوق'], ['cust', '👥', 'زبائن'], ['settings', '⚙️', 'إعدادات']];
-    const topNav = [['dash', 'الرئيسية'], ['omt', 'OMT'], ['acc', 'إكسسوار'], ['mob', 'موبايل'], ['rec', 'تعبئة'], ['services', 'خدمات'], ['cust', 'زبائن'], ['suppliers', 'موردين'], ['rev', 'مداخيل'], ['invoice', 'فاتورة'], ['contacts', 'عناوين'], ['reports', 'تقارير'], ['box', 'الصندوق'], ['settings', 'إعدادات']];
+    const topNav = [['dash', 'الرئيسية'], ['omt', 'OMT'], ['acc', 'إكسسوار'], ['mob', 'موبايل'], ['rec', 'تعبئة'], ['services', 'خدمات'], ['cust', 'زبائن'], ['suppliers', 'موردين'], ['rev', 'مداخيل'], ['invoice', 'فاتورة'], ['contacts', 'عناوين'], ['daily', 'اليومية'], ['reports', 'تقارير'], ['box', 'الصندوق'], ['settings', 'إعدادات']];
     const backTarget = view === 'service' ? 'services' : view === 'cust_stmt' ? 'cust' : 'dash';
     return React.createElement("div", { className: "app" },
         locked && React.createElement(LockScreen, { user: user, onUnlock: () => setLocked(false), onLogout: logout }),
