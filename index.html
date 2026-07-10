@@ -296,6 +296,23 @@ input,select,textarea{font-family:inherit;font-size:16px}
   .stat-grid{grid-template-columns:repeat(4,1fr)}
 }
 
+/* ============ v19: استغلال كامل عرض الشاشة الكبيرة ============ */
+@media (min-width:1100px){
+  .page{max-width:1040px}
+  .cust-grid{grid-template-columns:repeat(3,1fr)}
+  .page .list{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:start}
+  .page .pk-grid{grid-template-columns:repeat(4,1fr)}
+  /* القوائم داخل النوافذ المنبثقة بتضل عمود واحد */
+  .sheet .list,.ov .list{display:flex;flex-direction:column}
+}
+@media (min-width:1500px){
+  .app{max-width:1400px}
+  .page{max-width:1300px}
+  .cust-grid{grid-template-columns:repeat(4,1fr)}
+  .page .list{grid-template-columns:repeat(3,1fr)}
+  .sheet .list,.ov .list{display:flex;flex-direction:column}
+}
+
 
 /* ============ v3: stepper, services, statement, whatsapp, print ============ */
 .stock-now{font-size:12.5px;font-weight:700;color:var(--muted);background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:8px 11px;margin-bottom:11px}
