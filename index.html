@@ -305,6 +305,13 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .date-div::after{content:'';flex:1;height:1px;background:var(--line)}
 .date-div .dd-badge{background:var(--surface-2);border:1px solid var(--line);border-radius:20px;padding:4px 13px;font-weight:800;color:var(--ink);white-space:nowrap}
 .date-div .dd-count{color:var(--muted);font-weight:700;white-space:nowrap}
+.date-div .dd-sum{background:var(--brand-soft);color:var(--brand-2);border:1px solid rgba(11,110,79,.18);border-radius:20px;padding:4px 12px;font-weight:800;white-space:nowrap;font-size:11px}
+.cc-qa{display:flex;gap:6px;margin:7px 0 0}
+.cc-qa button{flex:1;padding:8px 4px;border-radius:10px;font-weight:800;font-size:12px;border:1px solid transparent;transition:.13s}
+.cc-qa .cc-qa-debt{background:var(--neg-soft);color:var(--neg);border-color:rgba(185,28,28,.18)}
+.cc-qa .cc-qa-debt:active{transform:scale(.96)}
+.cc-qa .cc-qa-pay{background:var(--brand-soft);color:var(--brand-2);border-color:rgba(11,110,79,.18)}
+.cc-qa .cc-qa-pay:active{transform:scale(.96)}
 @media (min-width:1100px){
   .page{max-width:1040px}
   .cust-grid{grid-template-columns:repeat(3,1fr)}
@@ -504,6 +511,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
 <body>
 <div id="root"></div>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
@@ -515,7 +523,7 @@ const { useState, useEffect, useMemo, useRef, createContext, useContext } = Reac
 const DB_KEY = 'famstore_db_v1';
 const WA_DEFAULT = 'مرحبا {name} 🌹\nهيدا كشف حسابكن لدى {shop}.\nالرصيد المستحق عليكم: {balance}.\nيرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.';
 const BROADCAST_DEFAULT = '🎉 عرض خاص من FAM STORE!\nوصلتنا بضاعة جديدة وأسعار منيحة 📱\nمرحبا فيكن تمرقوا عـالمحل. للاستفسار: 71917163';
-const APP_VERSION = 'v19.1 · 2026-07-10 — أرباح بالعملتين + تعديل كامل + تأكيدات ملونة';
+const APP_VERSION = 'v22 · 2026-07-10 — ربط حساب السحابة (Firebase Auth) + مزامنة دمج';
 const DEFAULT_SERVICES = () => [{ id: 'whish', name: 'Whish', icon: '💸' }, { id: 'ipick', name: 'iPick', icon: '🎫' }, { id: 'bycel', name: 'ByCel', icon: '📶' }, { id: 'ushare', name: 'Ushare', icon: '🔗' }];
 const USERS_DEFAULT = () => [{ id: 'u_admin', username: 'DAM', password: 'DAM', role: 'admin', active: true, perms: { profit: true, items: true, settings: true, delete: true } }, { id: 'u_fam', username: 'fam', password: 'fam', role: 'cashier', active: true, perms: { profit: false, items: false, settings: false, delete: true } }];
 const blank = () => ({
@@ -686,16 +694,37 @@ function readImage(file, cb, max, type, q) {
     r.readAsDataURL(file);
 }
 /* shared printable header with shop logo + full info */
+/* تنظيف أي نص مدخل من المستخدم قبل حقنه بصفحات الطباعة */
+function esc(v) {
+    return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+/* كلمة سر الحذف: مخزّنة hash بالإعدادات — غيّرها من صفحة الإعدادات لتطلع نهائياً من الكود */
+function pinHash(p) {
+    let h = 5381;
+    const s = 'FAM_' + String(p == null ? '' : p);
+    for (let i = 0; i < s.length; i++)
+        h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    let h2 = 52711;
+    for (let i = s.length - 1; i >= 0; i--)
+        h2 = ((h2 << 5) + h2 + s.charCodeAt(i)) | 0;
+    return 'v1.' + (h >>> 0).toString(36) + '.' + (h2 >>> 0).toString(36);
+}
+function checkDelPass(db, p) {
+    const st = db && db.settings && db.settings.delHash;
+    if (st)
+        return pinHash(p) === st;
+    return String(p == null ? '' : p) === '8886';
+}
 function printHeader(db, title, subtitle) {
     const s = db.settings;
     const lg = resolveImg(s.logo);
     const logo = lg ? `<img src="${lg}" style="height:62px;max-width:200px;object-fit:contain;margin-bottom:6px"/>` : '';
-    const contact = [s.addr, s.phone, s.email].filter(Boolean).join(' · ');
+    const contact = [s.addr, s.phone, s.email].filter(Boolean).map(esc).join(' · ');
     return `<div style="text-align:center;border-bottom:3px solid #0b6e4f;padding-bottom:11px;margin-bottom:14px">${logo}
-    <div style="font-size:22px;font-weight:900;color:#0b6e4f">${s.name || ''}</div>
+    <div style="font-size:22px;font-weight:900;color:#0b6e4f">${esc(s.name || '')}</div>
     ${contact ? `<div style="font-size:12px;color:#555">${contact}</div>` : ''}
-    <div style="font-size:16px;font-weight:800;margin-top:8px">${title}</div>
-    ${subtitle ? `<div style="font-size:11px;color:#777">${subtitle}</div>` : ''}</div>`;
+    <div style="font-size:16px;font-weight:800;margin-top:8px">${esc(title)}</div>
+    ${subtitle ? `<div style="font-size:11px;color:#777">${esc(subtitle)}</div>` : ''}</div>`;
 }
 /* --- Firebase sync hook point: load -> onSnapshot(doc); save -> setDoc(doc,_db); localStorage stays offline fallback --- */
 let _db = loadDB();
@@ -711,6 +740,67 @@ function saveDB() { _db._rev = Date.now(); try {
 catch (e) {
     alert('\u26a0\ufe0f ما قدرت احفظ البيانات محلياً! المساحة يمكن ممتلئة.');
 } subs.forEach((f) => f()); schedulePush(); }
+/* ============================ MERGE SYNC (حماية تعدد الأجهزة) ============================ */
+/* شاهد حذف: بدل ما تختفي العملية بصمت، منسجّل إنها انحذفت لتنحذف عند كل الأجهزة */
+function tomb(id) { try {
+    if (!id)
+        return;
+    _db._tomb = _db._tomb || {};
+    _db._tomb[id] = Date.now();
+}
+catch (e) { } }
+/* دمج قاعدتين: اتحاد كل العمليات حسب id، الأحدث تعديلاً بيربح، والمحذوف بيضل محذوف */
+function mergeDb(a, b) {
+    const newer = (N(a && a._rev) >= N(b && b._rev)) ? a : b;
+    const older = newer === a ? b : a;
+    let out;
+    try {
+        out = JSON.parse(JSON.stringify(newer));
+    }
+    catch (e) {
+        out = { ...newer };
+    }
+    Object.keys(older || {}).forEach((k) => { if (out[k] === undefined)
+        out[k] = older[k]; });
+    const tombs = Object.assign({}, (a && a._tomb) || {}, (b && b._tomb) || {});
+    const M = (x, y) => {
+        const m = new Map();
+        (x || []).forEach((r) => { if (r && r.id)
+            m.set(r.id, r); });
+        (y || []).forEach((r) => { if (!r || !r.id)
+            return; const o = m.get(r.id); if (!o || N(r._m || r.ts || 0) > N(o._m || o.ts || 0))
+            m.set(r.id, r); });
+        return Array.from(m.values()).filter((r) => !tombs[r.id]).sort((p, q) => N(q.ts) - N(p.ts));
+    };
+    const LISTS = ['omt', 'omtAdj', 'omtExch', 'omtcus', 'other', 'debts', 'payments', 'customers', 'suppliers', 'supDebts', 'supPayments', 'revenue', 'expenses', 'products', 'invoices', 'contacts', 'closings', 'rates', 'services', 'users'];
+    LISTS.forEach((k) => { out[k] = M(a && a[k], b && b[k]); });
+    out.audit = M(a && a.audit, b && b.audit).slice(0, 300);
+    out.rates = (out.rates || []).slice(0, 200);
+    ['acc', 'mob', 'rec'].forEach((k) => {
+        out[k] = out[k] || { items: [], sales: [], purchases: [] };
+        ['sales', 'purchases', 'items'].forEach((kk) => { out[k][kk] = M(a && a[k] && a[k][kk], b && b[k] && b[k][kk]); });
+    });
+    /* العدادات التسلسلية: الأعلى بيربح لمنع تكرار أرقام المراجع */
+    out.seq = {};
+    const sk = new Set(Object.keys((a && a.seq) || {}).concat(Object.keys((b && b.seq) || {})));
+    sk.forEach((k) => { out.seq[k] = Math.max(N(a && a.seq && a.seq[k]), N(b && b.seq && b.seq[k])); });
+    /* تنظيف شواهد الحذف الأقدم من ٩٠ يوم */
+    const cutoff = Date.now() - 90 * 24 * 3600 * 1000;
+    out._tomb = {};
+    Object.keys(tombs).forEach((id) => { if (N(tombs[id]) >= cutoff)
+        out._tomb[id] = tombs[id]; });
+    out._rev = Math.max(N(a && a._rev), N(b && b._rev));
+    return out;
+}
+/* توقيع محتوى للمقارنة (بدون حقول متقلبة) لمنع دورات دفع لانهائية */
+function dbSig(d) { try {
+    const c = { ...d };
+    delete c._rev;
+    return JSON.stringify(c);
+}
+catch (e) {
+    return String(Math.random());
+} }
 /* ============================ FIREBASE CLOUD SYNC ============================ */
 const firebaseConfig = { apiKey: "AIzaSyAVr5L81CTOX3xs5uDy5FoWdt9TQTFd_sI", authDomain: "shopbarelais.firebaseapp.com", projectId: "shopbarelais", storageBucket: "shopbarelais.firebasestorage.app", messagingSenderId: "208284024800", appId: "1:208284024800:web:cdd04143d295ed6a547585" };
 let fbDoc = null;
@@ -743,7 +833,7 @@ catch (e) { } try {
 catch (e) { } return null; }
 function pushFirebase() { if (!fbDoc)
     return; setSync('syncing'); try {
-    fbDoc.set({ ...packCloud(_db), _rev: _db._rev || 0, ts: Date.now() }).then(() => setSync('synced')).catch(() => setSync('off'));
+    fbDoc.set({ ...packCloud(_db), _rev: _db._rev || 0, ts: Date.now() }).then(() => setSync('synced')).catch((e) => { setSync((e && (e.code === 'permission-denied' || String(e.message || '').indexOf('permission') >= 0)) ? 'auth' : 'off'); });
 }
 catch (e) {
     setSync('off');
@@ -772,6 +862,39 @@ function initFirebase() {
             return;
         }
         firebase.initializeApp(firebaseConfig);
+        /* --- طبقة الحماية: Firebase Auth --- */
+        try {
+            firebase.auth().onAuthStateChanged((u) => {
+                cloudUser = u || null;
+                authSubs.forEach((f) => { try {
+                    f(cloudUser);
+                }
+                catch (e) { } });
+                if (u)
+                    startCloudListeners();
+            });
+        }
+        catch (e) { }
+        startCloudListeners();
+    }
+    catch (e) {
+        setSync('off');
+    }
+}
+let cloudUser = null;
+const authSubs = new Set();
+function useCloudUser() { const [u, setU] = useState(cloudUser); useEffect(() => { const f = (x) => setU(x); authSubs.add(f); return () => { authSubs.delete(f); }; }, []); return u; }
+function fbSignIn(email, pass) { return firebase.auth().signInWithEmailAndPassword(String(email || '').trim(), String(pass || '')); }
+function fbSignOut() { try {
+    return firebase.auth().signOut();
+}
+catch (e) { } }
+let _cloudStarted = false;
+function startCloudListeners() {
+    try {
+        if (_cloudStarted || !window.firebase)
+            return;
+        _cloudStarted = true;
         fbDoc = firebase.firestore().collection('famstore').doc('state');
         try {
             fbImages = firebase.firestore().collection('images');
@@ -792,41 +915,94 @@ function initFirebase() {
         setSync('syncing');
         fbDoc.onSnapshot((snap) => {
             const d = snap.data() || {};
-            const rrev = d._rev || 0, lrev = _db._rev || 0;
-            if ((d.cz || d.json) && rrev > lrev) {
+            if (d.cz || d.json) {
                 try {
                     const remote = unpackCloud(d);
                     if (remote) {
-                        _db = normalize(remote);
+                        remote._rev = d._rev || remote._rev || 0;
+                        const remoteSig = dbSig(normalize(JSON.parse(JSON.stringify(remote))));
+                        const merged = normalize(mergeDb(_db, remote));
+                        _db = merged;
                         try {
                             localStorage.setItem(DB_KEY, JSON.stringify(_db));
                         }
                         catch (e) { }
                         subs.forEach((f) => f());
-                        setSync('synced');
+                        if (dbSig(_db) !== remoteSig) {
+                            /* عنا شي مش موجود عالسحابة — ادفع النسخة المدموجة */
+                            _db._rev = Date.now();
+                            pushFirebase();
+                        }
+                        else {
+                            setSync('synced');
+                        }
                         return;
                     }
                 }
                 catch (e) { }
             }
-            if (lrev > rrev) {
+            if ((_db._rev || 0) > (d._rev || 0)) {
                 pushFirebase();
             }
             else {
                 setSync('synced');
             }
-        }, (_e) => setSync('off'));
+        }, (_e) => {
+            _cloudStarted = false;
+            if (_e && (_e.code === 'permission-denied' || String(_e.message || '').indexOf('permission') >= 0)) {
+                setSync('auth');
+            }
+            else {
+                setSync('off');
+            }
+        });
     }
     catch (e) {
+        _cloudStarted = false;
         setSync('off');
     }
+}
+function CloudAccountCard() {
+    const ui = useUI();
+    const cu = useCloudUser();
+    const [em, setEm] = useState(''), [pw, setPw] = useState(''), [busy, setBusy] = useState(false);
+    const hasFb = !!window.firebase;
+    const link = () => {
+        if (!em.trim() || !pw)
+            return ui.toast('حط الإيميل وكلمة السر');
+        setBusy(true);
+        fbSignIn(em, pw).then(() => { setBusy(false); setEm(''); setPw(''); ui.toast('☁️ انربط الجهاز بحساب السحابة ✓', 'ok'); }).catch((e) => {
+            setBusy(false);
+            const c = (e && e.code) || '';
+            ui.toast(c.indexOf('invalid-credential') >= 0 || c.indexOf('wrong-password') >= 0 || c.indexOf('user-not-found') >= 0 ? '❌ الإيميل أو كلمة السر غلط — تأكد إنك عامل الحساب بمشروع shopbarelais بالذات (Authentication ← Users)' : c.indexOf('operation-not-allowed') >= 0 ? '❌ مزوّد Email/Password مش مفعّل بالـ Console — فعّلو من Sign-in method' : c.indexOf('invalid-email') >= 0 ? '❌ صيغة الإيميل غلط — لازم شكل user@domain.com' : c.indexOf('too-many-requests') >= 0 ? '⏳ محاولات كتير — استنى دقيقتين وجرّب' : c.indexOf('network') >= 0 ? '📡 ما في نت — جرّب بعدين' : 'ما زبط الربط: ' + c, 'out');
+        });
+    };
+    const unlink = () => ui.confirm({ title: 'فك ربط السحابة؟', desc: 'هالجهاز بيوقف يتزامن لحد ما تعيد الربط. البيانات المحلية بتضل موجودة.', lines: [['الحساب', (cu && cu.email) || '']], danger: true, okText: 'فك الربط', onOk: () => { fbSignOut(); ui.toast('انفك الربط', 'out'); } });
+    if (!hasFb)
+        return null;
+    return React.createElement("div", { className: "card" },
+        React.createElement("div", { className: "sec-h tight" },
+            React.createElement("div", { className: "bar" }),
+            React.createElement("h2", null, "\u2601\uFE0F \u062D\u0633\u0627\u0628 \u0627\u0644\u0633\u062D\u0627\u0628\u0629 (\u0644\u0647\u0627\u0644\u062C\u0647\u0627\u0632)")),
+        cu ? React.createElement(React.Fragment, null,
+            React.createElement("div", { className: "kv" },
+                React.createElement("div", { className: "k" }, "\u0645\u0631\u0628\u0648\u0637 \u0628\u062D\u0633\u0627\u0628"),
+                React.createElement("div", { className: "v num pos" }, cu.email || '\u2014')),
+            React.createElement("button", { className: "btn btn-ghost", style: { marginTop: 9 }, onClick: unlink }, "\u0641\u0643 \u0631\u0628\u0637 \u0647\u0627\u0644\u062C\u0647\u0627\u0632"))
+            : React.createElement(React.Fragment, null,
+                React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 0, marginBottom: 8 } }, "\u0627\u0631\u0628\u0637 \u0647\u0627\u0644\u062C\u0647\u0627\u0632 \u0628\u062D\u0633\u0627\u0628 Firebase \u062A\u0628\u0639\u0643 \u2014 \u0645\u0631\u0629 \u0648\u062D\u062F\u0629 \u0628\u0633 \u0648\u0628\u062A\u0646\u062D\u0641\u0638 \u0627\u0644\u062C\u0644\u0633\u0629. \u0628\u0639\u062F \u062A\u0641\u0639\u064A\u0644 \u0642\u0648\u0627\u0639\u062F \u0627\u0644\u062D\u0645\u0627\u064A\u0629\u060C \u0627\u0644\u0645\u0632\u0627\u0645\u0646\u0629 \u0645\u0627 \u0628\u062A\u0634\u062A\u063A\u0644 \u0625\u0644\u0627 \u0628\u0627\u0644\u0631\u0628\u0637."),
+                React.createElement(Field, { label: "\u0627\u0644\u0625\u064A\u0645\u064A\u0644" },
+                    React.createElement("input", { value: em, onChange: (e) => setEm(e.target.value), placeholder: "user@famstore.com", autoCapitalize: "off", type: "email" })),
+                React.createElement(Field, { label: "\u0643\u0644\u0645\u0629 \u0627\u0644\u0633\u0631" },
+                    React.createElement("input", { type: "password", value: pw, onChange: (e) => setPw(e.target.value), onKeyDown: (e) => e.key === 'Enter' && link() })),
+                React.createElement("button", { className: "btn btn-primary", disabled: busy, onClick: link }, busy ? '\u0639\u0645 \u064A\u0631\u0628\u0637\u2026' : '\u0631\u0628\u0637 \u0627\u0644\u062C\u0647\u0627\u0632 \u2601\uFE0F')));
 }
 function SyncDot() {
     const ui = useUI();
     const [st, setSt] = useState(syncState);
     useEffect(() => { const f = (x) => setSt(x); syncSubs.add(f); return () => { syncSubs.delete(f); }; }, []);
-    const color = st === 'synced' ? '#16a34a' : st === 'syncing' ? '#f59e0b' : '#cbd5e1';
-    const lbl = st === 'synced' ? 'متزامن مع السحابة' : st === 'syncing' ? 'عم يتزامن' : 'غير متزامن — تأكد من النت';
+    const color = st === 'synced' ? '#16a34a' : st === 'syncing' ? '#f59e0b' : st === 'auth' ? '#e05252' : '#cbd5e1';
+    const lbl = st === 'synced' ? 'متزامن مع السحابة' : st === 'syncing' ? 'عم يتزامن' : st === 'auth' ? '🔒 بدو ربط حساب السحابة — من الإعدادات' : 'غير متزامن — تأكد من النت';
     return React.createElement("button", { className: "sync-dot", title: lbl, onClick: () => { ui.toast(lbl); if (st !== 'synced')
             pushFirebase(); } },
         React.createElement("span", { className: "sd-c", style: { background: color, boxShadow: st === 'syncing' ? '0 0 0 3px rgba(245,158,11,.25)' : 'none' } }));
@@ -882,6 +1058,38 @@ function waLink(phone, text) {
     else if (d.length)
         d = '961' + d;
     return 'https://wa.me/' + d + '?text=' + encodeURIComponent(text);
+}
+/* فتح تطبيق واتساب مباشرة (Desktop App) — وإذا مش مركّب يرجع للويب تلقائياً */
+function waOpen(phone, text) {
+    let d = String(phone == null ? '' : phone).replace(/\D/g, '');
+    if (d.startsWith('00'))
+        d = d.slice(2);
+    if (d.startsWith('961')) { }
+    else if (d.startsWith('0'))
+        d = '961' + d.slice(1);
+    else if (d.length)
+        d = '961' + d;
+    const enc = encodeURIComponent(text);
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (isMobile) {
+        window.open('https://wa.me/' + d + '?text=' + enc, '_blank');
+        return;
+    }
+    /* عالكمبيوتر: جرّب التطبيق أولاً */
+    const fallback = setTimeout(() => { window.open('https://wa.me/' + d + '?text=' + enc, '_blank'); }, 1400);
+    const cancel = () => clearTimeout(fallback);
+    window.addEventListener('blur', cancel, { once: true });
+    document.addEventListener('visibilitychange', function vc() { if (document.hidden) {
+        cancel();
+        document.removeEventListener('visibilitychange', vc);
+    } });
+    try {
+        window.location.href = 'whatsapp://send?phone=' + d + '&text=' + enc;
+    }
+    catch (e) {
+        cancel();
+        window.open('https://wa.me/' + d + '?text=' + enc, '_blank');
+    }
 }
 function balText(balL, balU) {
     const a = [];
@@ -1134,15 +1342,15 @@ function buildFeed(db) {
     db.omt.forEach((x) => push({ id: x.id, ts: x.ts, date: x.date, etype: 'omt', erec: x, receipt: true, ic: x.dir === 'IN' ? '▲' : '▼', c: x.dir === 'IN' ? 'var(--brand-2)' : 'var(--neg)', bg: x.dir === 'IN' ? 'var(--brand-soft)' : 'var(--neg-soft)',
         t: 'حوالة OMT — ' + (x.dir === 'IN' ? 'دخول' : 'خروج'), s: money2(x.lbp, x.usd),
         rows: [['النوع', x.dir === 'IN' ? 'دخول (IN)' : 'خروج (OUT)'], ['ليرة', fLBP(x.lbp)], ['دولار', fUSD(x.usd)], ['التاريخ', fDate(x.date)], ['رقم الوصل', x.ref || '—']],
-        del: () => { db.omt = db.omt.filter((y) => y.id !== x.id); } }));
+        del: () => { (tomb(x.id), db.omt = db.omt.filter((y) => y.id !== x.id)); } }));
     db.omtExch.forEach((x) => push({ id: x.id, ts: x.ts, date: x.date, etype: 'exch', erec: x, receipt: true, ic: '🔁', c: 'var(--gold)', bg: 'var(--gold-soft)', t: 'صرافة OMT',
         s: (x.type === 'USD' ? fUSD(x.amount) + '$' : fLBP(x.amount)) + ' → ' + (x.type === 'USD' ? fLBP(x.total) + ' ل.ل' : fUSD(x.total) + '$'),
         rows: [['النوع', x.type === 'USD' ? 'دولار→ليرة' : 'ليرة→دولار'], ['المبلغ', x.type === 'USD' ? fUSD(x.amount) + '$' : fLBP(x.amount)], ['السعر', fLBP(x.rate)], ['الناتج', x.type === 'USD' ? fLBP(x.total) : fUSD(x.total)], ['رقم الوصل', x.ref || '—']],
-        del: () => { db.omtExch = db.omtExch.filter((y) => y.id !== x.id); } }));
+        del: () => { (tomb(x.id), db.omtExch = db.omtExch.filter((y) => y.id !== x.id)); } }));
     db.omtAdj.forEach((x) => push({ id: x.id, ts: x.ts, date: x.date, etype: 'adj', erec: x, ic: '⚖️', c: 'var(--ink)', bg: 'var(--surface-2)', t: 'تعديل رصيد OMT — ' + x.type,
         s: mc(x.type.indexOf('USD') >= 0 ? 'USD' : 'LBP', x.amount),
         rows: [['النوع', x.type], ['المبلغ', mc(x.type.indexOf('USD') >= 0 ? 'USD' : 'LBP', x.amount)], ['التاريخ', fDate(x.date)]],
-        del: () => { db.omtAdj = db.omtAdj.filter((y) => y.id !== x.id); } }));
+        del: () => { (tomb(x.id), db.omtAdj = db.omtAdj.filter((y) => y.id !== x.id)); } }));
     ['acc', 'mob', 'rec'].forEach(k => {
         db[k].sales.forEach((x) => push({ id: x.id, ts: x.ts, date: x.date, etype: 'inv', erec: x, ic: '↗', c: 'var(--brand-2)', bg: 'var(--brand-soft)', t: 'بيع ' + SV[k] + ' — ' + x.item,
             s: N(x.qty) + ' × ' + mc(x.curr, x.price) + ' = ' + mc(x.curr, x.total),
@@ -1155,17 +1363,17 @@ function buildFeed(db) {
     });
     db.payments.forEach((x) => push({ id: x.id, ts: x.ts, date: x.date, etype: 'pay', erec: x, ic: '+', c: 'var(--brand-2)', bg: 'var(--brand-soft)', t: 'تسديد — ' + x.name, s: money2(x.lbp, x.usd),
         rows: [['الزبون', x.name], ['ليرة', fLBP(x.lbp)], ['دولار', fUSD(x.usd)], ['التاريخ', fDate(x.date)]],
-        del: () => { db.payments = db.payments.filter((y) => y.id !== x.id); } }));
+        del: () => { (tomb(x.id), db.payments = db.payments.filter((y) => y.id !== x.id)); } }));
     db.debts.forEach((x) => push({ id: x.id, ts: x.ts, date: x.date, etype: 'debt', erec: x, ic: '−', c: 'var(--neg)', bg: 'var(--neg-soft)', t: 'دين — ' + x.name, s: (x.desc ? x.desc + ' · ' : '') + money2(x.lbp, x.usd),
         rows: [['الزبون', x.name], ['ليرة', fLBP(x.lbp)], ['دولار', fUSD(x.usd)], ['ملاحظة', x.desc || '—'], ['التاريخ', fDate(x.date)]],
-        del: () => { db.debts = db.debts.filter((y) => y.id !== x.id); } }));
+        del: () => { (tomb(x.id), db.debts = db.debts.filter((y) => y.id !== x.id)); } }));
     db.other.forEach((x) => push({ id: x.id, ts: x.ts, date: x.date, etype: 'svc', erec: x, ic: x.svc[0], c: 'var(--gold)', bg: 'var(--gold-soft)', t: x.svc + ' — ' + (x.kind === 'sell' ? 'بيع رصيد' : 'شراء رصيد'), s: mc(x.curr, x.amount),
         rows: [['الخدمة', x.svc], ['النوع', x.kind === 'sell' ? 'بيع رصيد (صندوق +)' : 'شراء رصيد (صندوق −)'], ['المبلغ', mc(x.curr, x.amount)], ['التاريخ', fDate(x.date)]],
-        del: () => { db.other = db.other.filter((y) => y.id !== x.id); } }));
+        del: () => { (tomb(x.id), db.other = db.other.filter((y) => y.id !== x.id)); } }));
     db.revenue.forEach((x) => push({ id: x.id, ts: x.ts, date: x.date, etype: 'rev', erec: x, ic: '＋', c: 'var(--brand-2)', bg: 'var(--brand-soft)', t: 'مدخول — ' + x.item, s: money2(x.lbp, x.usd),
-        rows: [['البند', x.item], ['ليرة', fLBP(x.lbp)], ['دولار', fUSD(x.usd)], ['التاريخ', fDate(x.date)]], del: () => { db.revenue = db.revenue.filter((y) => y.id !== x.id); } }));
+        rows: [['البند', x.item], ['ليرة', fLBP(x.lbp)], ['دولار', fUSD(x.usd)], ['التاريخ', fDate(x.date)]], del: () => { (tomb(x.id), db.revenue = db.revenue.filter((y) => y.id !== x.id)); } }));
     db.expenses.forEach((x) => push({ id: x.id, ts: x.ts, date: x.date, etype: 'exp', erec: x, ic: '－', c: 'var(--neg)', bg: 'var(--neg-soft)', t: 'مصروف — ' + x.item, s: money2(x.lbp, x.usd),
-        rows: [['البند', x.item], ['ليرة', fLBP(x.lbp)], ['دولار', fUSD(x.usd)], ['التاريخ', fDate(x.date)]], del: () => { db.expenses = db.expenses.filter((y) => y.id !== x.id); } }));
+        rows: [['البند', x.item], ['ليرة', fLBP(x.lbp)], ['دولار', fUSD(x.usd)], ['التاريخ', fDate(x.date)]], del: () => { (tomb(x.id), db.expenses = db.expenses.filter((y) => y.id !== x.id)); } }));
     f.sort((a, b) => (N(b.ts) - N(a.ts)) || (new Date(b.date) - new Date(a.date)));
     return f;
 }
@@ -1271,7 +1479,7 @@ function DetailModal({ title, rows, onDelete, edit, receipt, close }) {
         React.createElement("div", { className: "btn-row", style: { marginTop: 14 } },
             receipt && React.createElement("button", { className: "btn btn-ghost", onClick: () => ui.print({ title: 'وصل', html: receiptHTML(db, title, rows) }) }, "\uD83E\uDDFE \u0648\u0635\u0644"),
             edit && React.createElement("button", { className: "btn btn-gold", onClick: () => setEditing(true) }, "\u270F\uFE0F \u062A\u0639\u062F\u064A\u0644"),
-            can('delete') && onDelete && React.createElement("button", { className: "btn btn-danger", onClick: () => { const p = prompt('كلمة سر الحذف:'); if (p === '8886') {
+            can('delete') && onDelete && React.createElement("button", { className: "btn btn-danger", onClick: () => { const p = prompt('كلمة سر الحذف:'); if (checkDelPass(db, p)) {
                     onDelete();
                     logAudit('حذف', title || 'عملية');
                     saveDB();
@@ -1292,6 +1500,7 @@ function EditModal({ spec, rec, onDone, close }) {
             rec[f.k] = v[f.k]; });
         if (spec.recompute)
             spec.recompute(rec);
+        rec._m = now();
         logAudit('تعديل', spec.title || 'عملية');
         saveDB();
         if (onDone)
@@ -1433,7 +1642,7 @@ function RateEditor() {
                         " \u00B7 ",
                         r.by || '—')))))));
 }
-function HistList({ title, items, render, right, editType }) {
+function HistList({ title, items, render, right, editType, sumDay }) {
     const ui = useUI();
     const db = useDB();
     const t = todayISO();
@@ -1442,15 +1651,16 @@ function HistList({ title, items, render, right, editType }) {
         return 'اليوم — ' + fDate(d); const y = new Date(t + 'T12:00:00'); y.setDate(y.getDate() - 1); if (d === y.toISOString().slice(0, 10))
         return 'مبارح — ' + fDate(d); return fDate(d); };
     const out = [];
-    let lastD = null, dayCount = 0;
+    let lastD = null;
     (items || []).forEach((x) => {
         const d = String(x.date || '').slice(0, 10);
         if (d !== lastD) {
             lastD = d;
-            dayCount = (items || []).filter((y) => String(y.date || '').slice(0, 10) === d).length;
+            const dayItems = (items || []).filter((y) => String(y.date || '').slice(0, 10) === d);
             out.push(React.createElement("div", { key: 'dd_' + d + '_' + out.length, className: "date-div" },
                 React.createElement("span", { className: "dd-badge" }, "\uD83D\uDCC5 " + dayLbl(d)),
-                React.createElement("span", { className: "dd-count num" }, dayCount + " \u0639\u0645\u0644\u064A\u0629")));
+                React.createElement("span", { className: "dd-count num" }, dayItems.length + " \u0639\u0645\u0644\u064A\u0629"),
+                sumDay && React.createElement("span", { className: "dd-sum num" }, sumDay(dayItems))));
         }
         const r = render(x);
         const sp = (r.rows && editType) ? mkEdit(db, editType, x) : null;
@@ -1471,7 +1681,7 @@ function Login({ onLogin }) {
     const go = () => {
         const usr = (db.users || []).find((x) => x.username === u.trim() && String(x.password) === p);
         if (!usr)
-            return setErr('اسم المستخدم أو كلمة السر غلط');
+            return setErr(u.indexOf('@') >= 0 ? 'هيدي شاشة دخول البرنامج — الإيميل تبع السحابة محلو بالإعدادات ← ☁️ حساب السحابة. فوت هون باسم المستخدم العادي' : 'اسم المستخدم أو كلمة السر غلط');
         if (usr.active === false)
             return setErr('هذا المستخدم موقوف — راجع المسؤول');
         onLogin({ username: usr.username, role: usr.role, perms: usr.perms || {} });
@@ -1773,9 +1983,9 @@ function OMTTransfer() {
                 React.createElement(Field, { label: "\u062F\u0648\u0644\u0627\u0631 $" },
                     React.createElement(Money, { value: usd, onChange: setUsd, usd: true }))),
             React.createElement("button", { className: "btn btn-primary", onClick: submit }, "\u062D\u0641\u0638 \u0627\u0644\u062D\u0648\u0627\u0644\u0629")),
-        React.createElement(HistList, { editType: "omt", title: "\u0622\u062E\u0631 \u0627\u0644\u062D\u0648\u0627\u0644\u0627\u062A", items: db.omt.slice(0, 40), render: (x) => ({ ic: x.dir === 'IN' ? '▲' : '▼', bg: x.dir === 'IN' ? 'var(--brand-soft)' : 'var(--neg-soft)', c: x.dir === 'IN' ? 'var(--brand-2)' : 'var(--neg)', receipt: true,
+        React.createElement(HistList, { editType: "omt", title: "\u0622\u062E\u0631 \u0627\u0644\u062D\u0648\u0627\u0644\u0627\u062A", items: db.omt.slice(0, 40), sumDay: (aa) => { let il = 0, iu = 0, ol = 0, ou = 0; aa.forEach((xx) => { if (xx.dir === 'IN') { il += N(xx.lbp); iu += N(xx.usd); } else { ol += N(xx.lbp); ou += N(xx.usd); } }); return '▲ ' + money2(il, iu) + '  ▼ ' + money2(ol, ou); }, render: (x) => ({ ic: x.dir === 'IN' ? '▲' : '▼', bg: x.dir === 'IN' ? 'var(--brand-soft)' : 'var(--neg-soft)', c: x.dir === 'IN' ? 'var(--brand-2)' : 'var(--neg)', receipt: true,
                 name: x.dir === 'IN' ? 'دخول' : 'خروج', tag: fDate(x.date), tagClass: x.dir === 'IN' ? 't-in' : 't-out', sub: (x.ref ? x.ref + ' · ' : '') + money2(x.lbp, x.usd), amt: '',
-                rows: [['النوع', x.dir === 'IN' ? 'دخول' : 'خروج'], ['ليرة', fLBP(x.lbp)], ['دولار', fUSD(x.usd)], ['التاريخ', fDate(x.date)], ['رقم الوصل', x.ref || '—']], del: () => { db.omt = db.omt.filter((y) => y.id !== x.id); } }) }));
+                rows: [['النوع', x.dir === 'IN' ? 'دخول' : 'خروج'], ['ليرة', fLBP(x.lbp)], ['دولار', fUSD(x.usd)], ['التاريخ', fDate(x.date)], ['رقم الوصل', x.ref || '—']], del: () => { (tomb(x.id), db.omt = db.omt.filter((y) => y.id !== x.id)); } }) }));
 }
 function OMTExch() {
     const db = useDB();
@@ -1809,11 +2019,11 @@ function OMTExch() {
                 "\u0627\u0644\u0646\u0627\u062A\u062C: ",
                 React.createElement("span", { className: "num" }, type === 'USD' ? fLBP(total) + ' ل.ل' : fUSD(total) + ' $')),
             React.createElement("button", { className: "btn btn-primary", style: { marginTop: 10 }, onClick: submit }, "\u062D\u0641\u0638 \u0627\u0644\u0635\u0631\u0627\u0641\u0629")),
-        React.createElement(HistList, { editType: "exch", title: "\u0622\u062E\u0631 \u0639\u0645\u0644\u064A\u0627\u062A \u0627\u0644\u0635\u0631\u0627\u0641\u0629", items: db.omtExch.slice(0, 30), render: (x) => ({ ic: '🔁', bg: 'var(--gold-soft)', c: 'var(--gold)', receipt: true,
+        React.createElement(HistList, { editType: "exch", title: "\u0622\u062E\u0631 \u0639\u0645\u0644\u064A\u0627\u062A \u0627\u0644\u0635\u0631\u0627\u0641\u0629", items: db.omtExch.slice(0, 30), sumDay: (aa) => { let bb = 0, ss = 0; aa.forEach((xx) => { if (xx.type === 'USD') bb += N(xx.amount); else ss += N(xx.total); }); return 'شراء ' + fUSD(bb) + '$ · بيع ' + fUSD(ss) + '$'; }, render: (x) => ({ ic: '🔁', bg: 'var(--gold-soft)', c: 'var(--gold)', receipt: true,
                 name: x.type === 'USD' ? 'دولار→ليرة' : 'ليرة→دولار', sub: (x.ref ? x.ref + ' · ' : '') + (x.type === 'USD' ? fUSD(x.amount) + '$' : fLBP(x.amount)) + ' × ' + fLBP(x.rate),
                 amt: x.type === 'USD' ? fLBP(x.total) : fUSD(x.total), sub2: fDate(x.date),
                 rows: [['النوع', x.type === 'USD' ? 'دولار→ليرة' : 'ليرة→دولار'], ['المبلغ', x.type === 'USD' ? fUSD(x.amount) : fLBP(x.amount)], ['السعر', fLBP(x.rate)], ['الناتج', x.type === 'USD' ? fLBP(x.total) : fUSD(x.total)], ['رقم الوصل', x.ref || '—']],
-                del: () => { db.omtExch = db.omtExch.filter((y) => y.id !== x.id); } }) }));
+                del: () => { (tomb(x.id), db.omtExch = db.omtExch.filter((y) => y.id !== x.id)); } }) }));
 }
 function OMTAdj() {
     const db = useDB();
@@ -1836,7 +2046,7 @@ function OMTAdj() {
             React.createElement("button", { className: "btn btn-primary", onClick: submit }, "\u062D\u0641\u0638 \u0627\u0644\u062A\u0639\u062F\u064A\u0644")),
         React.createElement(HistList, { editType: "adj", title: "\u0633\u062C\u0644 \u0627\u0644\u062A\u0639\u062F\u064A\u0644\u0627\u062A", items: db.omtAdj.slice(0, 30), render: (x) => ({ ic: '⚖️', bg: 'var(--surface-2)', c: 'var(--ink)', name: x.type,
                 tag: fDate(x.date), tagClass: x.type.indexOf('USD') >= 0 ? 't-usd' : x.type.indexOf('IN') === 0 ? 't-in' : 't-out', sub: mc(x.type.indexOf('USD') >= 0 ? 'USD' : 'LBP', x.amount), amt: '',
-                rows: [['النوع', x.type], ['المبلغ', mc(x.type.indexOf('USD') >= 0 ? 'USD' : 'LBP', x.amount)], ['التاريخ', fDate(x.date)]], del: () => { db.omtAdj = db.omtAdj.filter((y) => y.id !== x.id); } }) }));
+                rows: [['النوع', x.type], ['المبلغ', mc(x.type.indexOf('USD') >= 0 ? 'USD' : 'LBP', x.amount)], ['التاريخ', fDate(x.date)]], del: () => { (tomb(x.id), db.omtAdj = db.omtAdj.filter((y) => y.id !== x.id)); } }) }));
 }
 /* ============================ INVENTORY (dual currency + qty stepper) ============================ */
 function Inventory({ storeKey }) {
@@ -2113,14 +2323,14 @@ function InvEntry({ storeKey, kind }) {
                 React.createElement(Field, { label: "\u0627\u0644\u0625\u062C\u0645\u0627\u0644\u064A (\u0644\u0644\u062A\u0639\u062F\u064A\u0644)" },
                     React.createElement(Money, { value: tot, onChange: setTot, usd: curr === 'USD' }))),
             React.createElement("button", { className: 'btn ' + (kind === 'sell' ? 'btn-primary' : 'btn-dark'), onClick: submit }, kind === 'sell' ? 'حفظ البيع' : 'حفظ الشراء')),
-        React.createElement(HistList, { editType: "inv", title: kind === 'sell' ? 'آخر مبيعات' : 'آخر مشتريات', items: recs, render: (x) => ({ ic: kind === 'sell' ? '↗' : '↘', bg: kind === 'sell' ? 'var(--brand-soft)' : 'var(--surface-2)', c: kind === 'sell' ? 'var(--brand-2)' : 'var(--ink)',
+        React.createElement(HistList, { editType: "inv", title: kind === 'sell' ? 'آخر مبيعات' : 'آخر مشتريات', items: recs, sumDay: (aa) => { let ll = 0, uu = 0; aa.forEach((xx) => { if (xx.curr === 'USD') uu += N(xx.total); else ll += N(xx.total); }); return (kind === 'sell' ? 'مبيع اليوم: ' : 'مشترى اليوم: ') + money2(ll, uu); }, render: (x) => ({ ic: kind === 'sell' ? '↗' : '↘', bg: kind === 'sell' ? 'var(--brand-soft)' : 'var(--surface-2)', c: kind === 'sell' ? 'var(--brand-2)' : 'var(--ink)',
                 img: ((store.items || []).find((it) => it.name === x.item) || {}).img,
                 name: x.item, sub: N(x.qty) + ' × ' + mc(x.curr, x.price) + ' · ' + fDate(x.date), amt: mc(x.curr, x.total),
                 rows: [['الصنف', x.item], ['الكمية', String(N(x.qty))], ['سعر القطعة', mc(x.curr, x.price)], ['الإجمالي', mc(x.curr, x.total)], ['التاريخ', fDate(x.date)]],
                 del: () => { if (kind === 'sell')
-                    store.sales = store.sales.filter((y) => y.id !== x.id);
+                    (tomb(x.id), store.sales = store.sales.filter((y) => y.id !== x.id));
                 else
-                    store.purchases = store.purchases.filter((y) => y.id !== x.id); } }) }));
+                    (tomb(x.id), store.purchases = store.purchases.filter((y) => y.id !== x.id)); } }) }));
 }
 function InvStock({ storeKey }) {
     const db = useDB();
@@ -2255,8 +2465,8 @@ function ItemSheet({ store, item, close }) {
         ui.toast('انحفظ ✓');
         close();
     };
-    const del = () => { const p = prompt('كلمة سر الحذف:'); if (p === '8886') {
-        store.items = store.items.filter((x) => x.id !== item.id);
+    const del = () => { const p = prompt('كلمة سر الحذف:'); if (checkDelPass(db, p)) {
+        (tomb(item.id), store.items = store.items.filter((x) => x.id !== item.id));
         saveDB();
         ui.toast('انحذف الصنف');
         close();
@@ -2303,8 +2513,8 @@ function ServicesHub({ openService }) {
         setAdding(false);
         ui.toast('انضافت الخدمة ✓');
     };
-    const del = (s) => { const p = prompt('حذف خدمة ' + s.name + '؟ اكتب كلمة السر (الحركات بتضل محفوظة):'); if (p === '8886') {
-        db.services = db.services.filter((x) => x.id !== s.id);
+    const del = (s) => { const p = prompt('حذف خدمة ' + s.name + '؟ اكتب كلمة السر (الحركات بتضل محفوظة):'); if (checkDelPass(db, p)) {
+        (tomb(s.id), db.services = db.services.filter((x) => x.id !== s.id));
         saveDB();
         ui.toast('انحذفت');
     }
@@ -2491,7 +2701,7 @@ function ServicePage({ svc }) {
                                     readImage(f, (d) => setImg(d)); } })),
                         img && React.createElement("button", { className: "btn btn-ghost btn-sm", onClick: () => setImg('') }, "\u0625\u0632\u0627\u0644\u0629"))),
                 React.createElement("button", { className: "btn btn-ghost", onClick: addItem }, "+ \u0625\u0636\u0627\u0641\u0629 \u0635\u0646\u0641"),
-                items.length > 0 && React.createElement("div", { className: "list", style: { marginTop: 10 } }, items.map((it) => React.createElement("div", { key: it.id, className: "row-item tappable", onClick: () => ui.detail({ title: it.name, rows: [['الاسم', it.name], ['سعر الشراء', mc(it.curr || 'LBP', it.buy)], ['سعر البيع', mc(it.curr || 'LBP', it.sell)], ['المخزون', String(stockMap[it.name] || 0) + ' قطعة']], edit: { spec: { title: 'تعديل صنف', fields: [{ k: 'name', label: 'الاسم', kind: 'text' }, { k: 'buy', label: 'سعر الشراء', kind: 'money' }, { k: 'sell', label: 'سعر البيع', kind: 'money' }] }, rec: it }, onDelete: () => { sObj.items = sObj.items.filter((x) => x.id !== it.id); } }) },
+                items.length > 0 && React.createElement("div", { className: "list", style: { marginTop: 10 } }, items.map((it) => React.createElement("div", { key: it.id, className: "row-item tappable", onClick: () => ui.detail({ title: it.name, rows: [['الاسم', it.name], ['سعر الشراء', mc(it.curr || 'LBP', it.buy)], ['سعر البيع', mc(it.curr || 'LBP', it.sell)], ['المخزون', String(stockMap[it.name] || 0) + ' قطعة']], edit: { spec: { title: 'تعديل صنف', fields: [{ k: 'name', label: 'الاسم', kind: 'text' }, { k: 'buy', label: 'سعر الشراء', kind: 'money' }, { k: 'sell', label: 'سعر البيع', kind: 'money' }] }, rec: it }, onDelete: () => { (tomb(it.id), sObj.items = sObj.items.filter((x) => x.id !== it.id)); } }) },
                     resolveImg(it.img) ? React.createElement("div", { className: "av av-img" },
                         React.createElement("img", { src: resolveImg(it.img), alt: "" })) : React.createElement("div", { className: "av", style: { background: 'var(--gold-soft)', color: 'var(--gold)' } }, "\uD83D\uDCE6"),
                     React.createElement("div", { className: "main" },
@@ -2503,9 +2713,9 @@ function ServicePage({ svc }) {
                             React.createElement("span", { className: "num" }, fLBP(it.buy)),
                             " \u00B7 \u0645\u062E\u0632\u0648\u0646 ",
                             stockMap[it.name] || 0))))))),
-        React.createElement(HistList, { editType: "svc", title: 'حركات ' + svc, items: db.other.filter((o) => o.svc === svc).sort((a, b2) => N(b2.ts) - N(a.ts)).slice(0, 50), render: (x) => ({ ic: x.kind === 'sell' ? '↗' : '↘', bg: x.kind === 'sell' ? 'var(--brand-soft)' : 'var(--surface-2)', c: x.kind === 'sell' ? 'var(--brand-2)' : 'var(--ink)',
+        React.createElement(HistList, { editType: "svc", title: 'حركات ' + svc, items: db.other.filter((o) => o.svc === svc).sort((a, b2) => N(b2.ts) - N(a.ts)).slice(0, 50), sumDay: (aa) => { let sl = 0, su = 0, bl = 0, bu = 0; aa.forEach((xx) => { const vv = N(xx.amount); if (xx.kind === 'sell') { if (xx.curr === 'USD') su += vv; else sl += vv; } else { if (xx.curr === 'USD') bu += vv; else bl += vv; } }); return '↗ ' + money2(sl, su) + '  ↘ ' + money2(bl, bu); }, render: (x) => ({ ic: x.kind === 'sell' ? '↗' : '↘', bg: x.kind === 'sell' ? 'var(--brand-soft)' : 'var(--surface-2)', c: x.kind === 'sell' ? 'var(--brand-2)' : 'var(--ink)',
                 name: (x.item ? x.item + ' — ' : 'رصيد ') + (x.kind === 'sell' ? 'بيع' : 'شراء'), sub: (x.qty ? '×' + N(x.qty) + ' · ' : '') + fDate(x.date), amt: mc(x.curr, x.amount),
-                rows: [['الخدمة', svc], ['النوع', (x.item ? 'صنف ' : 'رصيد ') + (x.kind === 'sell' ? 'بيع' : 'شراء')], ...(x.item ? [['الصنف', x.item], ['الكمية', String(N(x.qty))]] : []), ['المبلغ', mc(x.curr, x.amount)], ['التاريخ', fDate(x.date)]], del: () => { db.other = db.other.filter((y) => y.id !== x.id); } }) }));
+                rows: [['الخدمة', svc], ['النوع', (x.item ? 'صنف ' : 'رصيد ') + (x.kind === 'sell' ? 'بيع' : 'شراء')], ...(x.item ? [['الصنف', x.item], ['الكمية', String(N(x.qty))]] : []), ['المبلغ', mc(x.curr, x.amount)], ['التاريخ', fDate(x.date)]], del: () => { (tomb(x.id), db.other = db.other.filter((y) => y.id !== x.id)); } }) }));
 }
 /* ============================ CUSTOMERS ============================ */
 function Users() {
@@ -2560,7 +2770,7 @@ function Users() {
         if (me && me.username === real.username)
             return ui.toast('ما فيك تحذف حسابك الحالي');
         const pwd = prompt('كلمة سر الحذف:');
-        if (pwd !== '8886') {
+        if (!checkDelPass(db, pwd)) {
             if (pwd != null)
                 ui.toast('كلمة السر غلط');
             return;
@@ -2658,8 +2868,8 @@ function ContactSheet({ contact, close }) {
         ui.toast('انحفظ ✓');
         close();
     };
-    const del = () => { const p = prompt('كلمة سر الحذف:'); if (p === '8886') {
-        db.contacts = db.contacts.filter((x) => x.id !== contact.id);
+    const del = () => { const p = prompt('كلمة سر الحذف:'); if (checkDelPass(db, p)) {
+        (tomb(contact.id), db.contacts = db.contacts.filter((x) => x.id !== contact.id));
         saveDB();
         ui.toast('انحذفت الجهة');
         close();
@@ -2790,14 +3000,14 @@ function AddressBook() {
         ui.toast('تم تصدير CSV ✓');
     };
     const sendOne = (c) => { if (!c.phone)
-        return ui.toast('ما في رقم'); window.open(waLink(c.phone, msg), '_blank'); };
+        return ui.toast('ما في رقم'); waOpen(c.phone, msg); };
     const rems = allReminders(db);
     const due = rems.filter((x) => x.dl != null && x.dl <= x.lead);
     const upcoming = rems.filter((x) => !(x.dl != null && x.dl <= x.lead));
     const sendRem = (x) => {
         if (!x.c.phone)
             return ui.toast('ما في رقم لهالجهة');
-        window.open(waLink(x.c.phone, renewalText(db, x.c, x.r)), '_blank');
+        waOpen(x.c.phone, renewalText(db, x.c, x.r));
         const real = (db.contacts || []).find((c) => c.id === x.c.id);
         if (real) {
             const rr = (real.reminders || []).find((r) => r.id === x.r.id);
@@ -3034,13 +3244,13 @@ function SupEntry({ kind }) {
             kind === 'owe' && React.createElement(Field, { label: "\u0645\u0644\u0627\u062D\u0638\u0629 (\u0627\u062E\u062A\u064A\u0627\u0631\u064A)" },
                 React.createElement("input", { value: desc, onChange: (e) => setDesc(e.target.value), placeholder: "\u0645\u062B\u0627\u0644: \u0628\u0636\u0627\u0639\u0629 \u0645\u0648\u0628\u0627\u064A\u0644\u0627\u062A" })),
             React.createElement("button", { className: 'btn ' + (kind === 'owe' ? 'btn-dark' : 'btn-primary'), onClick: submit }, kind === 'owe' ? 'تسجيل دين علينا' : 'تسجيل تسديد')),
-        React.createElement(HistList, { title: kind === 'owe' ? 'آخر ما علينا' : 'آخر التسديدات للموردين', items: (kind === 'owe' ? (db.supDebts || []) : (db.supPayments || [])).slice(0, 30), render: (x) => ({ ic: kind === 'owe' ? '−' : '+', bg: kind === 'owe' ? 'var(--neg-soft)' : 'var(--brand-soft)', c: kind === 'owe' ? 'var(--neg)' : 'var(--brand-2)',
+        React.createElement(HistList, { title: kind === 'owe' ? 'آخر ما علينا' : 'آخر التسديدات للموردين', items: (kind === 'owe' ? (db.supDebts || []) : (db.supPayments || [])).slice(0, 30), sumDay: (aa) => { let ll = 0, uu = 0; aa.forEach((xx) => { ll += N(xx.lbp); uu += N(xx.usd); }); return 'المجموع: ' + money2(ll, uu); }, render: (x) => ({ ic: kind === 'owe' ? '−' : '+', bg: kind === 'owe' ? 'var(--neg-soft)' : 'var(--brand-soft)', c: kind === 'owe' ? 'var(--neg)' : 'var(--brand-2)',
                 name: x.name, sub: (x.desc ? x.desc + ' · ' : '') + fDate(x.date), amt: N(x.lbp) ? fLBP(x.lbp) + ' ل.ل' : '', sub2: N(x.usd) ? fUSD(x.usd) + ' $' : '',
                 rows: [['المورّد', x.name], ['ليرة', fLBP(x.lbp)], ['دولار', fUSD(x.usd)], ['ملاحظة', x.desc || '—'], ['التاريخ', fDate(x.date)]],
                 del: () => { if (kind === 'owe')
-                    db.supDebts = db.supDebts.filter((y) => y.id !== x.id);
+                    (tomb(x.id), db.supDebts = db.supDebts.filter((y) => y.id !== x.id));
                 else
-                    db.supPayments = db.supPayments.filter((y) => y.id !== x.id); } }) }));
+                    (tomb(x.id), db.supPayments = db.supPayments.filter((y) => y.id !== x.id)); } }) }));
 }
 function SupNew() {
     const db = useDB();
@@ -3063,23 +3273,25 @@ function SupNew() {
             React.createElement("h2", null, "\u0627\u0644\u0645\u0648\u0631\u062F\u064A\u0646"),
             React.createElement("span", { className: "right" }, (db.suppliers || []).length)),
         (db.suppliers || []).length === 0 ? React.createElement(Empty, { ic: "\uD83C\uDFED", t: "\u0645\u0627 \u0641\u064A \u0645\u0648\u0631\u062F\u064A\u0646 \u0628\u0639\u062F" }) :
-            React.createElement("div", { className: "list" }, (db.suppliers || []).map((c) => React.createElement(Row, { key: c.id, ic: (c.name || '?')[0], bg: "var(--surface-2)", c: "var(--ink)", name: c.name, sub: c.phone || '—', onClick: () => ui.detail({ title: c.name, rows: [['الاسم', c.name], ['الهاتف', c.phone || '—']], edit: { spec: { title: 'تعديل مورّد', fields: [{ k: 'name', label: 'الاسم', kind: 'text' }, { k: 'phone', label: 'الهاتف', kind: 'text' }] }, rec: c }, onDelete: () => { db.suppliers = db.suppliers.filter((x) => x.id !== c.id); } }) }))));
+            React.createElement("div", { className: "list" }, (db.suppliers || []).map((c) => React.createElement(Row, { key: c.id, ic: (c.name || '?')[0], bg: "var(--surface-2)", c: "var(--ink)", name: c.name, sub: c.phone || '—', onClick: () => ui.detail({ title: c.name, rows: [['الاسم', c.name], ['الهاتف', c.phone || '—']], edit: { spec: { title: 'تعديل مورّد', fields: [{ k: 'name', label: 'الاسم', kind: 'text' }, { k: 'phone', label: 'الهاتف', kind: 'text' }] }, rec: c }, onDelete: () => { (tomb(c.id), db.suppliers = db.suppliers.filter((x) => x.id !== c.id)); } }) }))));
 }
 function Customers({ openCust }) {
     const db = useDB();
     const ui = useUI();
     const { rows, T } = custBalances(db);
     const [tab, setTab] = useState('list'), [q, setQ] = useState('');
+    const [preset, setPreset] = useState('');
+    const quick = (r, k) => { setPreset(r.name); setTab(k); };
     const lnaL = rows.reduce((s, r) => s + Math.max(0, r.balL), 0), lnaU = rows.reduce((s, r) => s + Math.max(0, r.balU), 0);
     const alaL = rows.reduce((s, r) => s + Math.max(0, -r.balL), 0), alaU = rows.reduce((s, r) => s + Math.max(0, -r.balU), 0);
     const sendReminder = (r) => { if (!r.phone)
-        return ui.toast('ما في رقم لهالزبون'); const msg = (db.settings.waTemplate || WA_DEFAULT).replace(/\{name\}/g, r.name).replace(/\{shop\}/g, db.settings.name).replace(/\{balance\}/g, balText(r.balL, r.balU) || 'لا يوجد'); window.open(waLink(r.phone, msg), '_blank'); ui.toast('عم يفتح واتساب…'); };
+        return ui.toast('ما في رقم لهالزبون'); const msg = (db.settings.waTemplate || WA_DEFAULT).replace(/\{name\}/g, r.name).replace(/\{shop\}/g, db.settings.name).replace(/\{balance\}/g, balText(r.balL, r.balU) || 'لا يوجد'); waOpen(r.phone, msg); ui.toast('عم يفتح واتساب…'); };
     const flt = rows.filter((r) => !q || (r.name || '').includes(q) || (r.phone || '').includes(q));
     const printAll = () => {
         const head = printHeader(db, 'كشف ذمم الزبائن', 'بتاريخ ' + fDate(todayISO()));
         const body = [...rows].sort((a, b) => Math.abs(b.balL) - Math.abs(a.balL)).map((r) => {
             const stt = (r.balL > 0 || r.balU > 0) ? 'بذمتو إلنا' : (r.balL < 0 || r.balU < 0) ? 'إلو عنا' : 'مسدّد';
-            return '<tr><td style="padding:6px">' + r.name + '</td><td style="padding:6px">' + (r.phone || '') + '</td><td style="padding:6px;text-align:center">' + (r.balL ? fLBP(Math.abs(r.balL)) : '—') + '</td><td style="padding:6px;text-align:center">' + (r.balU ? fUSD(Math.abs(r.balU)) : '—') + '</td><td style="padding:6px;text-align:center">' + stt + '</td></tr>';
+            return '<tr><td style="padding:6px">' + esc(r.name) + '</td><td style="padding:6px">' + esc(r.phone || '') + '</td><td style="padding:6px;text-align:center">' + (r.balL ? fLBP(Math.abs(r.balL)) : '—') + '</td><td style="padding:6px;text-align:center">' + (r.balU ? fUSD(Math.abs(r.balU)) : '—') + '</td><td style="padding:6px;text-align:center">' + stt + '</td></tr>';
         }).join('');
         const html = '<div style="font-family:Cairo,Tahoma,sans-serif;direction:rtl;padding:22px;color:#1a1a1a">' + head + '<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#0b6e4f;color:#fff"><th style="padding:7px;text-align:right">الزبون</th><th style="padding:7px">الهاتف</th><th style="padding:7px">ليرة</th><th style="padding:7px">دولار</th><th style="padding:7px">الحالة</th></tr></thead><tbody>' + body + '</tbody></table><div style="margin-top:14px;padding:12px;background:#eef4f1;border-radius:8px;font-weight:800"><div style="display:flex;justify-content:space-between"><span>إجمالي إلنا (لنا)</span><span style="color:#0b6e4f">' + fLBP(lnaL) + ' ل.ل · ' + fUSD(lnaU) + ' $</span></div><div style="display:flex;justify-content:space-between;margin-top:5px"><span>إجمالي علينا</span><span style="color:#c0392b">' + fLBP(alaL) + ' ل.ل · ' + fUSD(alaU) + ' $</span></div></div></div>';
         ui.print({ title: 'كشف ذمم الزبائن', html });
@@ -3102,8 +3314,8 @@ function Customers({ openCust }) {
                         " $")))),
         React.createElement("div", { className: "tabs", style: { marginTop: 13 } },
             React.createElement("button", { className: tab === 'list' ? 'active' : '', onClick: () => setTab('list') }, "\u0627\u0644\u0623\u0631\u0635\u062F\u0629"),
-            React.createElement("button", { className: tab === 'debt' ? 'active' : '', onClick: () => setTab('debt') }, "\u062F\u064A\u0646"),
-            React.createElement("button", { className: tab === 'pay' ? 'active' : '', onClick: () => setTab('pay') }, "\u062A\u0633\u062F\u064A\u062F"),
+            React.createElement("button", { className: tab === 'debt' ? 'active' : '', onClick: () => { setPreset(''); setTab('debt'); } }, "\u062F\u064A\u0646"),
+            React.createElement("button", { className: tab === 'pay' ? 'active' : '', onClick: () => { setPreset(''); setTab('pay'); } }, "\u062A\u0633\u062F\u064A\u062F"),
             React.createElement("button", { className: tab === 'new' ? 'active' : '', onClick: () => setTab('new') }, "\u0632\u0628\u0648\u0646")),
         tab === 'list' && (rows.length === 0 ? React.createElement(Empty, { ic: "\uD83D\uDC65", t: "\u0645\u0627 \u0641\u064A \u0632\u0628\u0627\u0626\u0646 \u0628\u0639\u062F" }) :
             React.createElement(React.Fragment, null,
@@ -3124,29 +3336,35 @@ function Customers({ openCust }) {
                                     "\u23F1 \u0645\u0646 ",
                                     ag,
                                     " \u064A\u0648\u0645")),
+                            React.createElement("div", { className: "cc-qa" },
+                                React.createElement("button", { className: "cc-qa-debt", onClick: () => quick(r, 'debt') }, "\u2212 \u062F\u064A\u0646"),
+                                React.createElement("button", { className: "cc-qa-pay", onClick: () => quick(r, 'pay') }, "+ \u062A\u0633\u062F\u064A\u062F")),
                             React.createElement("button", { className: "cc-wa", onClick: () => sendReminder(r) }, "\uD83D\uDCF2 \u0648\u0627\u062A\u0633\u0627\u0628"));
                     })))),
-        tab === 'debt' && React.createElement(CustEntry, { kind: "debt" }),
-        tab === 'pay' && React.createElement(CustEntry, { kind: "pay" }),
+        tab === 'debt' && React.createElement(CustEntry, { kind: "debt", preset: preset, key: 'd_' + preset }),
+        tab === 'pay' && React.createElement(CustEntry, { kind: "pay", preset: preset, key: 'p_' + preset }),
         tab === 'new' && React.createElement(CustNew, null));
 }
-function CustEntry({ kind }) {
+function CustEntry({ kind, preset }) {
     const db = useDB();
     const ui = useUI();
-    const [name, setName] = useState(''), [lbp, setLbp] = useState(''), [usd, setUsd] = useState(''), [desc, setDesc] = useState('');
+    const [name, setName] = useState(preset || ''), [lbp, setLbp] = useState(''), [usd, setUsd] = useState(''), [desc, setDesc] = useState('');
     const recent = Array.from(new Set([...db.debts, ...db.payments].sort((a, b) => N(b.ts) - N(a.ts)).map((x) => x.name))).slice(0, 6);
     const selBal = name ? ((custBalances(db).rows || []).find((c) => c.name === name)) : null;
     const bL = selBal ? selBal.balL : 0, bU = selBal ? selBal.balU : 0;
     const eL = N(lbp), eU = N(usd);
     const nbL = kind === 'debt' ? bL + eL : bL - eL, nbU = kind === 'debt' ? bU + eU : bU - eU;
     const fmtBal = (l, u) => (l ? fLBP(Math.abs(l)) + ' ل.ل' : '') + ((l && u) ? ' · ' : '') + (u ? fUSD(Math.abs(u)) + ' $' : '');
+    const balWord = (l, u) => (l || u) ? fmtBal(l, u) + ((l > 0 || u > 0) ? ' بذمّتو' : ' إلو عندك') : 'مسدّد ✓';
     const submit = () => {
         if (!name)
             return ui.toast('اختر الزبون');
         if (!N(lbp) && !N(usd))
             return ui.toast('حط مبلغ');
+        const custRec = db.customers.find((c) => c.name === name);
+        const phone = custRec && custRec.phone;
         ui.confirm({ title: kind === 'debt' ? 'تأكيد تسجيل دين' : 'تأكيد تسجيل تسديد', desc: (kind === 'debt' ? 'دين على ' : 'تسديد من ') + name + ':',
-            lines: [['الزبون', name], ['ليرة', N(lbp) ? fLBP(lbp) + ' ل.ل' : ''], ['دولار', N(usd) ? fUSD(usd) + ' $' : ''], ['ملاحظة', kind === 'debt' ? (desc || '') : '']],
+            lines: [['الزبون', name], ['ليرة', N(lbp) ? fLBP(lbp) + ' ل.ل' : ''], ['دولار', N(usd) ? fUSD(usd) + ' $' : ''], ['ملاحظة', kind === 'debt' ? (desc || '') : ''], ['⬅ رصيده قبل', balWord(bL, bU)], ['➡ رصيده بعد', balWord(nbL, nbU)]],
             onOk: () => {
                 const rec = { id: uid(), ts: now(), name, lbp: N(lbp), usd: N(usd), date: todayISO() };
                 if (kind === 'debt') {
@@ -3158,10 +3376,20 @@ function CustEntry({ kind }) {
                 logAudit('إضافة', (kind === 'debt' ? 'دين' : 'تسديد') + ' — ' + name + ' ' + money2(N(lbp), N(usd)));
                 saveDB();
                 cloudLogTx(kind === 'debt' ? 'debt' : 'pay', name + ' ' + money2(N(lbp), N(usd)), rec);
+                const amtTxt = money2(N(lbp), N(usd));
                 setLbp('');
                 setUsd('');
                 setDesc('');
-                ui.toast(kind === 'debt' ? 'انحفظ الدين ✓' : 'انحفظ التسديد ✓');
+                ui.toast((kind === 'debt' ? '📤 انحفظ دين على ' : '✅ انحفظ تسديد من ') + name + ' — ' + amtTxt + ' · الرصيد صار: ' + balWord(nbL, nbU), kind === 'debt' ? 'out' : 'in');
+                if (kind === 'pay' && phone) {
+                    const waMsg = 'مرحبا ' + name + ' 🌟\n' +
+                        'وصل تسليم من ' + (db.settings.name || 'المحل') + ':\n' +
+                        '✅ استلمنا منك: ' + amtTxt + '\n' +
+                        '📅 بتاريخ: ' + fDate(todayISO()) + '\n' +
+                        '💼 رصيدك بعد التسديد: ' + balWord(nbL, nbU) + '\n' +
+                        'شكراً لثقتك 🙏';
+                    setTimeout(() => ui.confirm({ title: '📲 إيصال واتساب', desc: 'تبعت للزبون إيصال تسديد رسمي؟', lines: [['الزبون', name], ['الرقم', phone], ['المبلغ', amtTxt], ['الرصيد الباقي', balWord(nbL, nbU)]], okText: 'إرسال الإيصال', onOk: () => { waOpen(phone, waMsg); } }), 250);
+                }
             } });
     };
     return React.createElement(React.Fragment, null,
@@ -3187,13 +3415,13 @@ function CustEntry({ kind }) {
             kind === 'debt' && React.createElement(Field, { label: "\u0645\u0644\u0627\u062D\u0638\u0629 (\u0627\u062E\u062A\u064A\u0627\u0631\u064A)" },
                 React.createElement("input", { value: desc, onChange: (e) => setDesc(e.target.value), placeholder: "\u0645\u062B\u0627\u0644: 20 \u062C\u064A\u063A\u0627 + 2$ \u0623\u0644\u0641\u0627" })),
             React.createElement("button", { className: 'btn ' + (kind === 'debt' ? 'btn-dark' : 'btn-primary'), onClick: submit }, kind === 'debt' ? 'تسجيل دين' : 'تسجيل تسديد')),
-        React.createElement(HistList, { editType: kind, title: kind === 'debt' ? 'آخر الديون' : 'آخر التسديدات', items: (kind === 'debt' ? db.debts : db.payments).slice(0, 30), render: (x) => ({ ic: kind === 'debt' ? '−' : '+', bg: kind === 'debt' ? 'var(--neg-soft)' : 'var(--brand-soft)', c: kind === 'debt' ? 'var(--neg)' : 'var(--brand-2)',
+        React.createElement(HistList, { editType: kind, title: kind === 'debt' ? 'آخر الديون' : 'آخر التسديدات', items: (kind === 'debt' ? db.debts : db.payments).slice(0, 30), sumDay: (aa) => { let ll = 0, uu = 0; aa.forEach((xx) => { ll += N(xx.lbp); uu += N(xx.usd); }); return 'المجموع: ' + money2(ll, uu); }, render: (x) => ({ ic: kind === 'debt' ? '−' : '+', bg: kind === 'debt' ? 'var(--neg-soft)' : 'var(--brand-soft)', c: kind === 'debt' ? 'var(--neg)' : 'var(--brand-2)',
                 name: x.name, sub: (x.desc ? x.desc + ' · ' : '') + fDate(x.date), amt: N(x.lbp) ? fLBP(x.lbp) + ' ل.ل' : '', sub2: N(x.usd) ? fUSD(x.usd) + ' $' : '',
                 rows: [['الزبون', x.name], ['ليرة', fLBP(x.lbp)], ['دولار', fUSD(x.usd)], ['ملاحظة', x.desc || '—'], ['التاريخ', fDate(x.date)]],
                 del: () => { if (kind === 'debt')
-                    db.debts = db.debts.filter((y) => y.id !== x.id);
+                    (tomb(x.id), db.debts = db.debts.filter((y) => y.id !== x.id));
                 else
-                    db.payments = db.payments.filter((y) => y.id !== x.id); } }) }));
+                    (tomb(x.id), db.payments = db.payments.filter((y) => y.id !== x.id)); } }) }));
 }
 function CustNew() {
     const db = useDB();
@@ -3215,7 +3443,7 @@ function CustNew() {
             React.createElement("div", { className: "bar" }),
             React.createElement("h2", null, "\u0627\u0644\u0632\u0628\u0627\u0626\u0646"),
             React.createElement("span", { className: "right" }, db.customers.length)),
-        React.createElement("div", { className: "list" }, db.customers.map((c) => React.createElement(Row, { key: c.id, ic: c.name[0], bg: "var(--surface-2)", c: "var(--ink)", name: c.name, sub: c.phone, onClick: () => ui.detail({ title: c.name, rows: [['الاسم', c.name], ['الهاتف', c.phone]], edit: { spec: mkEdit(db, 'cust', c), rec: c }, onDelete: () => { db.customers = db.customers.filter((x) => x.id !== c.id); } }) }))));
+        React.createElement("div", { className: "list" }, db.customers.map((c) => React.createElement(Row, { key: c.id, ic: c.name[0], bg: "var(--surface-2)", c: "var(--ink)", name: c.name, sub: c.phone, onClick: () => ui.detail({ title: c.name, rows: [['الاسم', c.name], ['الهاتف', c.phone]], edit: { spec: mkEdit(db, 'cust', c), rec: c }, onDelete: () => { (tomb(c.id), db.customers = db.customers.filter((x) => x.id !== c.id)); } }) }))));
 }
 function CustStatement({ cust, back }) {
     const db = useDB();
@@ -3225,12 +3453,12 @@ function CustStatement({ cust, back }) {
         + ((tot.balL > 0 && tot.balU > 0) ? ' و ' : '') + (tot.balU > 0 ? fUSD(tot.balU) + ' $' : '')) || 'لا يوجد رصيد مستحق';
     const tmpl = (db.settings.waTemplate || WA_DEFAULT).replace(/\{name\}/g, cust.name).replace(/\{shop\}/g, db.settings.name).replace(/\{balance\}/g, balStr);
     const [msg, setMsg] = useState(tmpl);
-    const sendWA = () => { window.open(waLink(cust.phone, msg), '_blank'); ui.toast('عم يفتح واتساب…'); };
+    const sendWA = () => { waOpen(cust.phone, msg); ui.toast('عم يفتح واتساب…'); };
     const printStmt = () => {
         const head = printHeader(db, 'كشف حساب — ' + cust.name, (cust.phone || '') + ' · بتاريخ ' + fDate(todayISO()));
         const body = ev.map((e) => `<tr>
       <td>${fDate(e.date)}</td>
-      <td>${e.kind === 'debt' ? ('دين' + (e.desc ? (' - ' + e.desc) : '')) : 'تسديد'}</td>
+      <td>${e.kind === 'debt' ? ('دين' + (e.desc ? (' - ' + esc(e.desc)) : '')) : 'تسديد'}</td>
       <td style="text-align:center;color:#c0392b">${e.kind === 'debt' ? money2(e.lbp, e.usd) : ''}</td>
       <td style="text-align:center;color:#0b6e4f">${e.kind === 'pay' ? money2(e.lbp, e.usd) : ''}</td>
       <td style="text-align:center;font-weight:700">${money2(e.balL, e.balU)}</td></tr>`).join('');
@@ -3292,9 +3520,9 @@ function CustStatement({ cust, back }) {
                     rows: [['النوع', e.kind === 'debt' ? 'دين (لنا)' : 'تسديد'], ['ليرة', fLBP(e.lbp)], ['دولار', fUSD(e.usd)], ['ملاحظة', e.desc || '—'], ['التاريخ', fDate(e.date)], ['الرصيد بعدها', money2(e.balL, e.balU)]],
                     edit: { spec: mkEdit(db, e.kind === 'debt' ? 'debt' : 'pay', (e.kind === 'debt' ? db.debts : db.payments).find((y) => y.id === e.id)), rec: (e.kind === 'debt' ? db.debts : db.payments).find((y) => y.id === e.id) },
                     onDelete: () => { if (e.kind === 'debt')
-                        db.debts = db.debts.filter((y) => y.id !== e.id);
+                        (tomb(e.id), db.debts = db.debts.filter((y) => y.id !== e.id));
                     else
-                        db.payments = db.payments.filter((y) => y.id !== e.id); } }) },
+                        (tomb(e.id), db.payments = db.payments.filter((y) => y.id !== e.id)); } }) },
                 React.createElement("div", { className: "av", style: { background: e.kind === 'debt' ? 'var(--neg-soft)' : 'var(--brand-soft)', color: e.kind === 'debt' ? 'var(--neg)' : 'var(--brand-2)' } }, e.kind === 'debt' ? '−' : '+'),
                 React.createElement("div", { className: "main" },
                     React.createElement("div", { className: "nm" },
@@ -3367,13 +3595,13 @@ function REEntry({ kind }) {
                 React.createElement(Field, { label: "\u062F\u0648\u0644\u0627\u0631 $" },
                     React.createElement(Money, { value: usd, onChange: setUsd, usd: true }))),
             React.createElement("button", { className: 'btn ' + (kind === 'rev' ? 'btn-primary' : 'btn-danger'), onClick: submit }, kind === 'rev' ? 'حفظ المدخول' : 'حفظ المصروف')),
-        React.createElement(HistList, { editType: kind, title: kind === 'rev' ? 'آخر المداخيل' : 'آخر المصاريف', items: arr.slice(0, 30), render: (x) => ({ ic: kind === 'rev' ? '+' : '−', bg: kind === 'rev' ? 'var(--brand-soft)' : 'var(--neg-soft)', c: kind === 'rev' ? 'var(--brand-2)' : 'var(--neg)',
+        React.createElement(HistList, { editType: kind, title: kind === 'rev' ? 'آخر المداخيل' : 'آخر المصاريف', items: arr.slice(0, 30), sumDay: (aa) => { let ll = 0, uu = 0; aa.forEach((xx) => { ll += N(xx.lbp); uu += N(xx.usd); }); return 'المجموع: ' + money2(ll, uu); }, render: (x) => ({ ic: kind === 'rev' ? '+' : '−', bg: kind === 'rev' ? 'var(--brand-soft)' : 'var(--neg-soft)', c: kind === 'rev' ? 'var(--brand-2)' : 'var(--neg)',
                 name: x.item, sub: (x.cat ? x.cat + ' · ' : '') + fDate(x.date), amt: N(x.lbp) ? fLBP(x.lbp) + ' ل.ل' : '', sub2: N(x.usd) ? fUSD(x.usd) + ' $' : '',
                 rows: [['البند', x.item], ['التصنيف', x.cat || '—'], ['ليرة', fLBP(x.lbp)], ['دولار', fUSD(x.usd)], ['التاريخ', fDate(x.date)]],
                 del: () => { if (kind === 'rev')
-                    db.revenue = db.revenue.filter((y) => y.id !== x.id);
+                    (tomb(x.id), db.revenue = db.revenue.filter((y) => y.id !== x.id));
                 else
-                    db.expenses = db.expenses.filter((y) => y.id !== x.id); } }) }));
+                    (tomb(x.id), db.expenses = db.expenses.filter((y) => y.id !== x.id)); } }) }));
 }
 /* ============================ INVOICE ============================ */
 function Invoice() {
@@ -3456,9 +3684,9 @@ function Invoice() {
             React.createElement("div", { className: "btn-row", style: { marginTop: 12 } },
                 React.createElement("button", { className: "btn btn-primary", onClick: saveInv }, "\u062D\u0641\u0638 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629"),
                 React.createElement("button", { className: "btn btn-gold", onClick: printInv }, "\uD83D\uDDA8 \u0637\u0628\u0627\u0639\u0629 \u0627\u0644\u0648\u0635\u0644 (PDF)"))),
-        React.createElement(HistList, { title: "\u0627\u0644\u0641\u0648\u0627\u062A\u064A\u0631 \u0627\u0644\u0633\u0627\u0628\u0642\u0629", items: db.invoices.slice(0, 30), right: db.invoices.length, render: (x) => ({ ic: '🧾', bg: 'var(--gold-soft)', c: 'var(--gold)', name: '#' + x.number, sub: (x.cust || '—') + ' · ' + fDate(x.date), amt: fLBP(x.total),
+        React.createElement(HistList, { title: "\u0627\u0644\u0641\u0648\u0627\u062A\u064A\u0631 \u0627\u0644\u0633\u0627\u0628\u0642\u0629", items: db.invoices.slice(0, 30), right: db.invoices.length, sumDay: (aa) => 'المجموع: ' + fLBP(aa.reduce((ss, xx) => ss + N(xx.total), 0)) + ' ل.ل', render: (x) => ({ ic: '🧾', bg: 'var(--gold-soft)', c: 'var(--gold)', name: '#' + x.number, sub: (x.cust || '—') + ' · ' + fDate(x.date), amt: fLBP(x.total),
                 rows: [['الرقم', '#' + x.number], ['الزبون', x.cust || '—'], ['عدد البنود', String((x.lines || []).length)], ['المجموع', fLBP(x.total) + ' ل.ل'], ['التاريخ', fDate(x.date)]],
-                del: () => { db.invoices = db.invoices.filter((y) => y.id !== x.id); } }) }));
+                del: () => { (tomb(x.id), db.invoices = db.invoices.filter((y) => y.id !== x.id)); } }) }));
 }
 /* ============================ OMT CUSTOMERS (KYC) ============================ */
 function OmtCus() {
@@ -3471,7 +3699,7 @@ function OmtCus() {
         if (!f.name || !f.phone)
             return ui.toast('حط الاسم والرقم');
         ui.confirm({ title: 'تأكيد حفظ الهوية', desc: 'تسجيل بيانات زبون OMT:', lines: [['الاسم', f.name], ['الهاتف', f.phone], ['رقم الهوية', f.idnum || '—']],
-            onOk: () => { db.omtcus.unshift({ id: uid(), ts: now(), ...f }); logAudit('إضافة', 'هوية OMT' + (f.name ? ' — ' + f.name : '')); saveDB(); setF({ phone: '', name: '', birth: '', idnum: '', expire: '' }); ui.toast((kind === 'debt' ? '📤 انحفظ دين على ' : '✅ انحفظ تسديد من ') + name + ' — ' + money2(N(lbp), N(usd)), kind === 'debt' ? 'out' : 'in'); } });
+            onOk: () => { db.omtcus.unshift({ id: uid(), ts: now(), ...f }); logAudit('إضافة', 'هوية OMT' + (f.name ? ' — ' + f.name : '')); saveDB(); setF({ phone: '', name: '', birth: '', idnum: '', expire: '' }); ui.toast('🪪 انحفظت الهوية' + (f.name ? ' — ' + f.name : '') + ' ✓', 'ok'); } });
     };
     const list = db.omtcus.filter((c) => !q || c.name.indexOf(q) >= 0 || String(c.phone).indexOf(q) >= 0 || String(c.idnum).indexOf(q) >= 0);
     return React.createElement("div", { className: "page" },
@@ -3492,7 +3720,7 @@ function OmtCus() {
         React.createElement("div", { className: "field", style: { marginTop: 13 } },
             React.createElement("input", { value: q, onChange: (e) => setQ(e.target.value), placeholder: "\uD83D\uDD0D \u0628\u062D\u062B \u0628\u0627\u0644\u0627\u0633\u0645 \u0623\u0648 \u0627\u0644\u0631\u0642\u0645\u2026", className: "search-in" })),
         list.length === 0 ? React.createElement(Empty, { ic: "\uD83E\uDEAA", t: "\u0645\u0627 \u0641\u064A \u0647\u0648\u064A\u0627\u062A" }) :
-            React.createElement("div", { className: "list" }, list.slice(0, 60).map((c) => React.createElement(Row, { key: c.id, ic: "\uD83E\uDEAA", bg: "var(--usd-soft)", c: "var(--usd)", name: c.name, sub: c.phone + ' · ' + (c.idnum || '—'), onClick: () => ui.detail({ title: c.name, rows: [['الهاتف', c.phone], ['الميلاد', c.birth || '—'], ['رقم الهوية', c.idnum || '—'], ['الانتهاء', c.expire || '—']], edit: { spec: mkEdit(db, 'kyc', c), rec: c }, onDelete: () => { db.omtcus = db.omtcus.filter((x) => x.id !== c.id); } }) }))));
+            React.createElement("div", { className: "list" }, list.slice(0, 60).map((c) => React.createElement(Row, { key: c.id, ic: "\uD83E\uDEAA", bg: "var(--usd-soft)", c: "var(--usd)", name: c.name, sub: c.phone + ' · ' + (c.idnum || '—'), onClick: () => ui.detail({ title: c.name, rows: [['الهاتف', c.phone], ['الميلاد', c.birth || '—'], ['رقم الهوية', c.idnum || '—'], ['الانتهاء', c.expire || '—']], edit: { spec: mkEdit(db, 'kyc', c), rec: c }, onDelete: () => { (tomb(c.id), db.omtcus = db.omtcus.filter((x) => x.id !== c.id)); } }) }))));
 }
 /* ============================ CALC ============================ */
 function Calc() {
@@ -3620,7 +3848,7 @@ function ClosingCard({ sysL, sysU }) {
                 React.createElement("div", { className: "bar" }),
                 React.createElement("h2", null, "\u062A\u0642\u0641\u064A\u0644\u0627\u062A \u0633\u0627\u0628\u0642\u0629"),
                 React.createElement("span", { className: "right" }, closings.length)),
-            React.createElement("div", { className: "list" }, closings.slice(0, 30).map((c) => React.createElement("div", { key: c.id, className: "row-item tappable", onClick: () => ui.detail({ title: 'تقفيل ' + fDate(c.date), rows: [['التاريخ', fDate(c.date)], ['نقد النظام', fLBP(c.sysL) + ' · ' + fUSD(c.sysU) + '$'], ['النقد الفعلي', fLBP(c.actL) + ' · ' + fUSD(c.actU) + '$'], ['الفرق', fLBP(c.diffL) + ' · ' + fUSD(c.diffU) + '$'], ['ملاحظة', c.note || '—'], ['المستخدم', c.by || '—']], onDelete: () => { db.closings = db.closings.filter((x) => x.id !== c.id); } }) },
+            React.createElement("div", { className: "list" }, closings.slice(0, 30).map((c) => React.createElement("div", { key: c.id, className: "row-item tappable", onClick: () => ui.detail({ title: 'تقفيل ' + fDate(c.date), rows: [['التاريخ', fDate(c.date)], ['نقد النظام', fLBP(c.sysL) + ' · ' + fUSD(c.sysU) + '$'], ['النقد الفعلي', fLBP(c.actL) + ' · ' + fUSD(c.actU) + '$'], ['الفرق', fLBP(c.diffL) + ' · ' + fUSD(c.diffU) + '$'], ['ملاحظة', c.note || '—'], ['المستخدم', c.by || '—']], onDelete: () => { (tomb(c.id), db.closings = db.closings.filter((x) => x.id !== c.id)); } }) },
                 React.createElement("div", { className: "av", style: { background: (c.diffL || c.diffU) ? 'var(--neg-soft)' : 'var(--brand-soft)', color: (c.diffL || c.diffU) ? 'var(--neg)' : 'var(--brand-2)' } }, (c.diffL || c.diffU) ? '≠' : '✓'),
                 React.createElement("div", { className: "main" },
                     React.createElement("div", { className: "nm" }, fDate(c.date)),
@@ -3670,19 +3898,109 @@ function DailyJournal() {
     const db = useDB();
     const ui = useUI();
     const [date, setDate] = useState(todayISO());
+    const [mode, setMode] = useState('type');
     const shift = (d) => { const x = new Date(date + 'T12:00:00'); x.setDate(x.getDate() + d); setDate(x.toISOString().slice(0, 10)); };
     const led = dayLedger(db, date);
     const feed = buildFeed(db).filter((x) => sameDay(x.date, date));
+    const groupOf = (x) => {
+        switch (x.etype) {
+            case 'omt': return { o: 1, l: '📮 حوالات OMT' };
+            case 'exch': return { o: 2, l: '🔁 صرافة' };
+            case 'adj': return { o: 3, l: '⚖️ تعديلات رصيد OMT' };
+            case 'inv': { const w = (x.t || '').split(' ')[1] || 'بضاعة'; const o2 = w === 'تعبئة' ? 4 : w === 'موبايل' ? 5 : 6; return { o: o2, l: '📦 ' + w + ' — بيع وشراء' }; }
+            case 'svc': return { o: 7, l: '🧾 خدمة — ' + ((x.erec && x.erec.svc) || '') };
+            case 'debt': return { o: 8, l: '🔻 ديون' };
+            case 'pay': return { o: 9, l: '🔺 تسديدات' };
+            case 'rev': return { o: 10, l: '＋ مداخيل' };
+            case 'exp': return { o: 11, l: '－ مصاريف' };
+            default: return { o: 12, l: 'أخرى' };
+        }
+    };
+    let feedOut;
+    if (mode === 'type' && feed.length) {
+        const gm = {};
+        feed.forEach((x) => { const g = groupOf(x); (gm[g.l] = gm[g.l] || { o: g.o, l: g.l, items: [] }).items.push(x); });
+        feedOut = Object.values(gm).sort((a, b) => a.o - b.o || (a.l < b.l ? -1 : 1));
+    }
+    const gSum = (g) => { let il = 0, iu = 0, ol = 0, ou = 0; g.items.forEach((x) => { const r = x.erec || {}; switch (x.etype) {
+        case 'omt':
+            if (r.dir === 'IN') {
+                il += N(r.lbp);
+                iu += N(r.usd);
+            }
+            else {
+                ol += N(r.lbp);
+                ou += N(r.usd);
+            }
+            break;
+        case 'exch':
+            if (r.type === 'USD') {
+                iu += N(r.amount);
+                ol += N(r.total);
+            }
+            else {
+                il += N(r.amount);
+                ou += N(r.total);
+            }
+            break;
+        case 'inv': {
+            const v = N(r.total);
+            const sell = (x.t || '').indexOf('بيع') === 0;
+            if (r.curr === 'USD') {
+                if (sell)
+                    iu += v;
+                else
+                    ou += v;
+            }
+            else {
+                if (sell)
+                    il += v;
+                else
+                    ol += v;
+            }
+            break;
+        }
+        case 'svc': {
+            const v = N(r.amount);
+            if (r.kind === 'sell') {
+                if (r.curr === 'USD')
+                    iu += v;
+                else
+                    il += v;
+            }
+            else {
+                if (r.curr === 'USD')
+                    ou += v;
+                else
+                    ol += v;
+            }
+            break;
+        }
+        case 'pay':
+        case 'rev':
+            il += N(r.lbp);
+            iu += N(r.usd);
+            break;
+        case 'debt':
+        case 'exp':
+            ol += N(r.lbp);
+            ou += N(r.usd);
+            break;
+    } }); const parts = []; if (il || iu)
+        parts.push('▲ ' + money2(il, iu)); if (ol || ou)
+        parts.push('▼ ' + money2(ol, ou)); return parts.join('  '); };
     const openItem = (it) => { const sp = it.etype ? mkEdit(db, it.etype, it.erec) : null; ui.detail({ title: it.t, rows: it.rows, onDelete: it.del, receipt: it.receipt, edit: sp ? { spec: sp, rec: it.erec } : null }); };
     const netL = led.T.inL - led.T.outL, netU = led.T.inU - led.T.outU;
     const printDay = () => {
-        const head = printHeader(db, 'دفتر اليومية', fDate(date));
+        const head = printHeader(db, 'دفتر اليومية', fDate(date) + (mode === 'type' ? ' — مرتّب حسب النوع' : ' — مرتّب حسب الوقت'));
+        const typeOrd = (t) => t.indexOf('حوالة') === 0 ? 1 : t.indexOf('صرافة') === 0 ? 2 : t.indexOf('تعديل رصيد') === 0 ? 3 : (t.indexOf('بيع') === 0 || t.indexOf('شراء') === 0) ? 4 : t.indexOf('خدمة') === 0 ? 5 : t.indexOf('دين') === 0 ? 6 : t.indexOf('تسديد') === 0 ? 7 : t.indexOf('دفعة لمورّد') === 0 ? 8 : t.indexOf('بضاعة من مورّد') === 0 ? 9 : t.indexOf('مدخول') === 0 ? 10 : 11;
+        const rowsP = mode === 'type' ? [...led.rows].sort((a, b) => typeOrd(a.t) - typeOrd(b.t) || a.ts - b.ts) : led.rows;
         const tm = (ts) => { if (!N(ts))
             return '—'; const d = new Date(N(ts)); const p = (n) => String(n).padStart(2, '0'); return p(d.getHours()) + ':' + p(d.getMinutes()); };
         const cell = (v, extra) => '<td style="padding:5px 6px;border:1px solid #ddd;font-size:11px;' + (extra || '') + '">' + v + '</td>';
         let body = '';
-        led.rows.forEach((r, i) => {
-            body += '<tr>' + cell(String(i + 1)) + cell(tm(r.ts)) + cell(r.t + (r.s ? '<div style="font-size:9px;color:#777">' + r.s + '</div>' : ''), 'text-align:right') + cell(r.inL ? fLBP(r.inL) : '—', 'text-align:left;color:#0b6e4f') + cell(r.inU ? fUSD(r.inU) : '—', 'text-align:left;color:#0b6e4f') + cell(r.outL ? fLBP(r.outL) : '—', 'text-align:left;color:#b91c1c') + cell(r.outU ? fUSD(r.outU) : '—', 'text-align:left;color:#b91c1c') + '</tr>';
+        rowsP.forEach((r, i) => {
+            body += '<tr>' + cell(String(i + 1)) + cell(tm(r.ts)) + cell(esc(r.t) + (r.s ? '<div style="font-size:9px;color:#777">' + esc(r.s) + '</div>' : ''), 'text-align:right') + cell(r.inL ? fLBP(r.inL) : '—', 'text-align:left;color:#0b6e4f') + cell(r.inU ? fUSD(r.inU) : '—', 'text-align:left;color:#0b6e4f') + cell(r.outL ? fLBP(r.outL) : '—', 'text-align:left;color:#b91c1c') + cell(r.outU ? fUSD(r.outU) : '—', 'text-align:left;color:#b91c1c') + '</tr>';
         });
         const th = (v) => '<th style="padding:6px;border:1px solid #ccc;background:#f2f7f4;font-size:11px">' + v + '</th>';
         const tot = '<tr style="font-weight:800;background:#fafafa">' + cell('') + cell('') + cell('المجموع', 'text-align:right') + cell(fLBP(led.T.inL), 'text-align:left;color:#0b6e4f') + cell(fUSD(led.T.inU), 'text-align:left;color:#0b6e4f') + cell(fLBP(led.T.outL), 'text-align:left;color:#b91c1c') + cell(fUSD(led.T.outU), 'text-align:left;color:#b91c1c') + '</tr>' +
@@ -3721,7 +4039,17 @@ function DailyJournal() {
                 React.createElement("div", { className: "sec-h tight" },
                     React.createElement("div", { className: "bar" }),
                     React.createElement("h2", null, "\u0643\u0644 \u0627\u0644\u062D\u0631\u0643\u0627\u062A")),
-                React.createElement("div", { className: "list" }, feed.map((x) => React.createElement(Row, { key: x.id, ic: x.ic, bg: x.bg, c: x.c, name: x.t, sub: x.s + ' \u00B7 ' + relTime(x.ts, x.date), onClick: () => openItem(x) })))),
+                React.createElement("div", { className: "tabs", style: { marginBottom: 10 } },
+                    React.createElement("button", { className: mode === 'type' ? 'active' : '', onClick: () => setMode('type') }, "\uD83D\uDCC2 \u062D\u0633\u0628 \u0627\u0644\u0646\u0648\u0639"),
+                    React.createElement("button", { className: mode === 'time' ? 'active' : '', onClick: () => setMode('time') }, "\uD83D\uDD52 \u062D\u0633\u0628 \u0627\u0644\u0648\u0642\u062A")),
+                mode === 'type' ?
+                    React.createElement("div", { className: "list" }, feedOut.map((g) => { const gs = gSum(g); return React.createElement(React.Fragment, { key: g.l },
+                        React.createElement("div", { className: "date-div" },
+                            React.createElement("span", { className: "dd-badge" }, g.l),
+                            React.createElement("span", { className: "dd-count num" }, g.items.length + " \u0639\u0645\u0644\u064A\u0629"),
+                            gs && React.createElement("span", { className: "dd-sum num" }, gs)),
+                        g.items.map((x) => React.createElement(Row, { key: x.id, ic: x.ic, bg: x.bg, c: x.c, name: x.t, sub: x.s + ' \u00B7 ' + relTime(x.ts, x.date), onClick: () => openItem(x) }))); })) :
+                    React.createElement("div", { className: "list" }, feed.map((x) => React.createElement(Row, { key: x.id, ic: x.ic, bg: x.bg, c: x.c, name: x.t, sub: x.s + ' \u00B7 ' + relTime(x.ts, x.date), onClick: () => openItem(x) })))),
         React.createElement("button", { className: "btn btn-gold", onClick: printDay }, "\uD83D\uDDA8 \u0637\u0628\u0627\u0639\u0629 \u062F\u0641\u062A\u0631 \u0627\u0644\u064A\u0648\u0645 (PDF)"));
 }
 /* ============================ ربح الفترة الدقيق + فاحص الأخطاء ============================ */
@@ -4025,7 +4353,8 @@ function Reports() {
                         " \u0644.\u0644",
                         c.balU ? ' · ' + fUSD(c.balU) + '$' : ''))))),
         React.createElement("button", { className: "btn btn-gold", onClick: printRep }, "\uD83D\uDDA8 \u0637\u0628\u0627\u0639\u0629 \u0627\u0644\u062A\u0642\u0631\u064A\u0631 (PDF)"),
-        React.createElement("button", { className: "btn btn-ghost", style: { marginTop: 9 }, onClick: () => { exportAllCSV(db); ui.toast('تم تصدير كل الحركات (CSV) ✓'); } }, "\uD83D\uDCCA \u062A\u0635\u062F\u064A\u0631 \u0643\u0644 \u0627\u0644\u062D\u0631\u0643\u0627\u062A (Excel/CSV)"));
+        React.createElement("button", { className: "btn btn-ghost", style: { marginTop: 9 }, onClick: () => { exportAllCSV(db); ui.toast('تم تصدير كل الحركات (CSV) ✓'); } }, "\uD83D\uDCCA \u062A\u0635\u062F\u064A\u0631 \u0643\u0644 \u0627\u0644\u062D\u0631\u0643\u0627\u062A (Excel/CSV)"),
+        can('settings') && React.createElement("button", { className: "btn btn-ghost", style: { marginTop: 9 }, onClick: changeDelPass }, "\uD83D\uDD10 \u062A\u063A\u064A\u064A\u0631 \u0643\u0644\u0645\u0629 \u0633\u0631 \u0627\u0644\u062D\u0630\u0641"));
 }
 function AuditLog() {
     const db = useDB();
@@ -4385,7 +4714,25 @@ function Settings({ onLogout, go }) {
     catch (x) {
         ui.toast('ملف غير صالح');
     } }; r.readAsText(file); };
+    const changeDelPass = () => {
+        const cur = prompt('كلمة سر الحذف الحالية:');
+        if (cur == null)
+            return;
+        if (!checkDelPass(db, cur))
+            return ui.toast('كلمة السر غلط', 'out');
+        const nv = prompt('كلمة السر الجديدة (يفضّل طويلة — حروف وأرقام):');
+        if (!nv || nv.length < 4)
+            return ui.toast('قصيرة كتير — ٤ خانات عالأقل');
+        const nv2 = prompt('عيد كتابتها للتأكيد:');
+        if (nv !== nv2)
+            return ui.toast('ما تطابقوا — ما تغيّر شي', 'out');
+        db.settings.delHash = pinHash(nv);
+        logAudit('أمان', 'تغيير كلمة سر الحذف');
+        saveDB();
+        ui.toast('🔐 اتغيّرت كلمة سر الحذف — احفظها منيح، ما في طريقة استرجاع', 'ok');
+    };
     return React.createElement("div", { className: "page" },
+        React.createElement(CloudAccountCard, null),
         can('settings') && React.createElement(React.Fragment, null,
             React.createElement("div", { className: "card" },
                 React.createElement("div", { className: "sec-h tight" },
