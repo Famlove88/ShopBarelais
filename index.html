@@ -297,10 +297,15 @@ input,select,textarea{font-family:inherit;font-size:16px}
 }
 
 /* ============ v19: استغلال كامل عرض الشاشة الكبيرة ============ */
+.date-div{display:flex;align-items:center;gap:10px;margin:8px 0 2px;font-size:11.5px}
+.date-div::after{content:'';flex:1;height:1px;background:var(--line)}
+.date-div .dd-badge{background:var(--surface-2);border:1px solid var(--line);border-radius:20px;padding:4px 13px;font-weight:800;color:var(--ink);white-space:nowrap}
+.date-div .dd-count{color:var(--muted);font-weight:700;white-space:nowrap}
 @media (min-width:1100px){
   .page{max-width:1040px}
   .cust-grid{grid-template-columns:repeat(3,1fr)}
   .page .list{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:start}
+  .page .list .date-div{grid-column:1/-1}
   .page .pk-grid{grid-template-columns:repeat(4,1fr)}
   /* القوائم داخل النوافذ المنبثقة بتضل عمود واحد */
   .sheet .list,.ov .list{display:flex;flex-direction:column}
@@ -1424,17 +1429,33 @@ function RateEditor() {
 function HistList({ title, items, render, right, editType }) {
     const ui = useUI();
     const db = useDB();
+    const t = todayISO();
+    const dayLbl = (d) => { if (!d)
+        return 'بلا تاريخ'; if (d === t)
+        return 'اليوم — ' + fDate(d); const y = new Date(t + 'T12:00:00'); y.setDate(y.getDate() - 1); if (d === y.toISOString().slice(0, 10))
+        return 'مبارح — ' + fDate(d); return fDate(d); };
+    const out = [];
+    let lastD = null, dayCount = 0;
+    (items || []).forEach((x) => {
+        const d = String(x.date || '').slice(0, 10);
+        if (d !== lastD) {
+            lastD = d;
+            dayCount = (items || []).filter((y) => String(y.date || '').slice(0, 10) === d).length;
+            out.push(React.createElement("div", { key: 'dd_' + d + '_' + out.length, className: "date-div" },
+                React.createElement("span", { className: "dd-badge" }, "\uD83D\uDCC5 " + dayLbl(d)),
+                React.createElement("span", { className: "dd-count num" }, dayCount + " \u0639\u0645\u0644\u064A\u0629")));
+        }
+        const r = render(x);
+        const sp = (r.rows && editType) ? mkEdit(db, editType, x) : null;
+        out.push(React.createElement(Row, { key: x.id || r.name, ic: r.ic, bg: r.bg, c: r.c, img: r.img, name: r.name, sub: r.sub, amt: r.amt, sub2: r.sub2, tag: r.tag, tagClass: r.tagClass, onClick: r.rows ? () => ui.detail({ title: r.name, rows: r.rows, onDelete: r.del, receipt: r.receipt, edit: sp ? { spec: sp, rec: x } : null }) : r.onClick }));
+    });
     return React.createElement(React.Fragment, null,
         React.createElement("div", { className: "sec-h" },
             React.createElement("div", { className: "bar" }),
             React.createElement("h2", null, title),
             right != null && React.createElement("span", { className: "right" }, right)),
         (!items || items.length === 0) ? React.createElement(Empty, { ic: "\uD83D\uDCC4", t: "\u0645\u0627 \u0641\u064A \u062D\u0631\u0643\u0627\u062A \u0628\u0639\u062F" }) :
-            React.createElement("div", { className: "list" }, items.map((x) => {
-                const r = render(x);
-                const sp = (r.rows && editType) ? mkEdit(db, editType, x) : null;
-                return React.createElement(Row, { key: x.id || r.name, ic: r.ic, bg: r.bg, c: r.c, img: r.img, name: r.name, sub: r.sub, amt: r.amt, sub2: r.sub2, tag: r.tag, tagClass: r.tagClass, onClick: r.rows ? () => ui.detail({ title: r.name, rows: r.rows, onDelete: r.del, receipt: r.receipt, edit: sp ? { spec: sp, rec: x } : null }) : r.onClick });
-            })));
+            React.createElement("div", { className: "list" }, out));
 }
 /* ============================ LOGIN ============================ */
 function Login({ onLogin }) {
