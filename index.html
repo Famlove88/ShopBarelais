@@ -523,7 +523,7 @@ const { useState, useEffect, useMemo, useRef, createContext, useContext } = Reac
 const DB_KEY = 'famstore_db_v1';
 const WA_DEFAULT = 'مرحبا {name} 🌹\nهيدا كشف حسابكن لدى {shop}.\nالرصيد المستحق عليكم: {balance}.\nيرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.';
 const BROADCAST_DEFAULT = '🎉 عرض خاص من FAM STORE!\nوصلتنا بضاعة جديدة وأسعار منيحة 📱\nمرحبا فيكن تمرقوا عـالمحل. للاستفسار: 71917163';
-const APP_VERSION = 'v22 · 2026-07-10 — ربط حساب السحابة (Firebase Auth) + مزامنة دمج';
+const APP_VERSION = 'v22.1 · 2026-07-10 — النسخة المعتمدة (إصلاح زر كلمة سر الحذف)';
 const DEFAULT_SERVICES = () => [{ id: 'whish', name: 'Whish', icon: '💸' }, { id: 'ipick', name: 'iPick', icon: '🎫' }, { id: 'bycel', name: 'ByCel', icon: '📶' }, { id: 'ushare', name: 'Ushare', icon: '🔗' }];
 const USERS_DEFAULT = () => [{ id: 'u_admin', username: 'DAM', password: 'DAM', role: 'admin', active: true, perms: { profit: true, items: true, settings: true, delete: true } }, { id: 'u_fam', username: 'fam', password: 'fam', role: 'cashier', active: true, perms: { profit: false, items: false, settings: false, delete: true } }];
 const blank = () => ({
@@ -4353,8 +4353,7 @@ function Reports() {
                         " \u0644.\u0644",
                         c.balU ? ' · ' + fUSD(c.balU) + '$' : ''))))),
         React.createElement("button", { className: "btn btn-gold", onClick: printRep }, "\uD83D\uDDA8 \u0637\u0628\u0627\u0639\u0629 \u0627\u0644\u062A\u0642\u0631\u064A\u0631 (PDF)"),
-        React.createElement("button", { className: "btn btn-ghost", style: { marginTop: 9 }, onClick: () => { exportAllCSV(db); ui.toast('تم تصدير كل الحركات (CSV) ✓'); } }, "\uD83D\uDCCA \u062A\u0635\u062F\u064A\u0631 \u0643\u0644 \u0627\u0644\u062D\u0631\u0643\u0627\u062A (Excel/CSV)"),
-        can('settings') && React.createElement("button", { className: "btn btn-ghost", style: { marginTop: 9 }, onClick: changeDelPass }, "\uD83D\uDD10 \u062A\u063A\u064A\u064A\u0631 \u0643\u0644\u0645\u0629 \u0633\u0631 \u0627\u0644\u062D\u0630\u0641"));
+        React.createElement("button", { className: "btn btn-ghost", style: { marginTop: 9 }, onClick: () => { exportAllCSV(db); ui.toast('تم تصدير كل الحركات (CSV) ✓'); } }, "\uD83D\uDCCA \u062A\u0635\u062F\u064A\u0631 \u0643\u0644 \u0627\u0644\u062D\u0631\u0643\u0627\u062A (Excel/CSV)"));
 }
 function AuditLog() {
     const db = useDB();
@@ -4782,6 +4781,7 @@ function Settings({ onLogout, go }) {
                     React.createElement("h2", null, "\u0646\u0633\u062E\u0629 \u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629")),
                 React.createElement("div", { className: "btn-row" },
                     React.createElement("button", { className: "btn btn-ghost", onClick: exportJSON }, "\u2B07 \u062A\u0646\u0632\u064A\u0644 \u0646\u0633\u062E\u0629"),
+            React.createElement("button", { className: "btn btn-ghost", style: { marginTop: 9 }, onClick: changeDelPass }, "\uD83D\uDD10 \u062A\u063A\u064A\u064A\u0631 \u0643\u0644\u0645\u0629 \u0633\u0631 \u0627\u0644\u062D\u0630\u0641"),
                     React.createElement("label", { className: "btn btn-ghost", style: { cursor: 'pointer' } },
                         "\u2B06 \u0627\u0633\u062A\u064A\u0631\u0627\u062F",
                         React.createElement("input", { type: "file", accept: "application/json", onChange: importJSON, style: { display: 'none' } }))),
