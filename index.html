@@ -523,7 +523,7 @@ const { useState, useEffect, useMemo, useRef, createContext, useContext } = Reac
 const DB_KEY = 'famstore_db_v1';
 const WA_DEFAULT = 'مرحبا {name} 🌹\nهيدا كشف حسابكن لدى {shop}.\nرصيدكم عنّا: {balance}.\nيرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.';
 const BROADCAST_DEFAULT = '🎉 عرض خاص من FAM STORE!\nوصلتنا بضاعة جديدة وأسعار منيحة 📱\nمرحبا فيكن تمرقوا عـالمحل. للاستفسار: 71917163';
-const APP_VERSION = 'v22.3 · 2026-07-11 — إصلاح عاجل: حماية رباعية ضد عواصف الكتابة بالمزامنة';
+const APP_VERSION = 'v22.4 · 2026-07-11 — تحصين إضافي: صمت ١٠ دقائق + دفعة واحدة بالطابور';
 const DEFAULT_SERVICES = () => [{ id: 'whish', name: 'Whish', icon: '💸' }, { id: 'ipick', name: 'iPick', icon: '🎫' }, { id: 'bycel', name: 'ByCel', icon: '📶' }, { id: 'ushare', name: 'Ushare', icon: '🔗' }];
 const USERS_DEFAULT = () => [{ id: 'u_admin', username: 'DAM', password: 'DAM', role: 'admin', active: true, perms: { profit: true, items: true, settings: true, delete: true } }, { id: 'u_fam', username: 'fam', password: 'fam', role: 'cashier', active: true, perms: { profit: false, items: false, settings: false, delete: true } }];
 const blank = () => ({
@@ -817,14 +817,22 @@ function schedulePush() { if (!fbDoc)
 /* مصالحة مؤجلة: بدل الدفع الفوري — تأخير عشوائي يمنع تصادم الأجهزة، وقاطع دائرة يمنع أي حلقة مفرغة */
 let _reconT = null;
 let _reconTimes = [];
+let _reconMuteUntil = 0;
 function scheduleReconcile() {
     if (_reconT)
         return;
     const nowT = Date.now();
+    if (nowT < _reconMuteUntil) {
+        setSync('synced');
+        return;
+    }
     _reconTimes = _reconTimes.filter((t) => nowT - t < 60000);
-    if (_reconTimes.length >= 6) {
+    if (_reconTimes.length >= 4) {
+        /* قاطع الدائرة: صمت ١٠ دقائق كاملة — الحفظ المحلي شغال والدمج بيكمل عالاستقبال */
+        _reconMuteUntil = nowT + 10 * 60000;
+        _reconTimes = [];
         try {
-            console.warn('FAM sync: circuit breaker — توقفت المصالحة التلقائية مؤقتاً');
+            console.warn('FAM sync: circuit breaker — مصالحة موقوفة ١٠ دقائق (يوجد جهاز بنسخة قديمة؟)');
         }
         catch (e) { }
         setSync('synced');
@@ -850,11 +858,20 @@ catch (e) { } try {
         return JSON.parse(d.json);
 }
 catch (e) { } return null; }
+let _pushInFlight = false;
+let _pushAgain = false;
 function pushFirebase() { if (!fbDoc)
-    return; setSync('syncing'); try {
-    fbDoc.set({ ...packCloud(_db), _rev: _db._rev || 0, ts: Date.now() }).then(() => setSync('synced')).catch((e) => { setSync((e && (e.code === 'permission-denied' || String(e.message || '').indexOf('permission') >= 0)) ? 'auth' : 'off'); });
+    return; if (_pushInFlight) {
+    _pushAgain = true;
+    return;
+} _pushInFlight = true; setSync('syncing'); try {
+    fbDoc.set({ ...packCloud(_db), _rev: _db._rev || 0, ts: Date.now() }).then(() => { _pushInFlight = false; setSync('synced'); if (_pushAgain) {
+        _pushAgain = false;
+        setTimeout(pushFirebase, 400);
+    } }).catch((e) => { _pushInFlight = false; _pushAgain = false; setSync((e && (e.code === 'permission-denied' || String(e.message || '').indexOf('permission') >= 0)) ? 'auth' : 'off'); });
 }
 catch (e) {
+    _pushInFlight = false;
     setSync('off');
 } }
 function deviceId() { try {
