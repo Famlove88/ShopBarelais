@@ -312,6 +312,11 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .cc-qa .cc-qa-debt:active{transform:scale(.96)}
 .cc-qa .cc-qa-pay{background:var(--brand-soft);color:var(--brand-2);border-color:rgba(11,110,79,.18)}
 .cc-qa .cc-qa-pay:active{transform:scale(.96)}
+.cc-bal2{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin:5px 0 3px}
+.cc-chip{padding:4px 11px;border-radius:20px;font-weight:800;font-size:12px;border:1px solid;white-space:nowrap}
+.cc-chip.chip-lna{background:var(--neg-soft,#fdecec);color:var(--neg,#b91c1c);border-color:rgba(185,28,28,.22)}
+.cc-chip.chip-lkm{background:var(--brand-soft,#e8f4ef);color:var(--brand-2,#0b6e4f);border-color:rgba(11,110,79,.22)}
+.cc-chip.chip-ok{background:var(--surface-2,#f4f6f5);color:var(--muted,#8a938f);border-color:var(--line,#e3e7e5)}
 @media (min-width:1100px){
   .page{max-width:1040px}
   .cust-grid{grid-template-columns:repeat(3,1fr)}
@@ -523,7 +528,7 @@ const { useState, useEffect, useMemo, useRef, createContext, useContext } = Reac
 const DB_KEY = 'famstore_db_v1';
 const WA_DEFAULT = 'مرحبا {name} 🌹\nهيدا كشف حسابكن لدى {shop}.\nرصيدكم عنّا: {balance}.\nيرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.';
 const BROADCAST_DEFAULT = '🎉 عرض خاص من FAM STORE!\nوصلتنا بضاعة جديدة وأسعار منيحة 📱\nمرحبا فيكن تمرقوا عـالمحل. للاستفسار: 71917163';
-const APP_VERSION = 'v22.4 · 2026-07-11 — تحصين إضافي: صمت ١٠ دقائق + دفعة واحدة بالطابور';
+const APP_VERSION = 'v22.5 · 2026-07-11 — رصيد مفصّل لكل عملة (لنا/لكم لكل وحدة)';
 const DEFAULT_SERVICES = () => [{ id: 'whish', name: 'Whish', icon: '💸' }, { id: 'ipick', name: 'iPick', icon: '🎫' }, { id: 'bycel', name: 'ByCel', icon: '📶' }, { id: 'ushare', name: 'Ushare', icon: '🔗' }];
 const USERS_DEFAULT = () => [{ id: 'u_admin', username: 'DAM', password: 'DAM', role: 'admin', active: true, perms: { profit: true, items: true, settings: true, delete: true } }, { id: 'u_fam', username: 'fam', password: 'fam', role: 'cashier', active: true, perms: { profit: false, items: false, settings: false, delete: true } }];
 const blank = () => ({
@@ -1140,6 +1145,19 @@ function waOpen(phone, text) {
         window.open('https://wa.me/' + d + '?text=' + enc, '_blank');
     }
 }
+/* تفصيل الرصيد لكل عملة على حدة: 9,050,000 ل.ل (لنا) · 20.00 $ (لكم) */
+function balParts(l, u) {
+    const p = [];
+    if (N(l) > 0)
+        p.push(fLBP(l) + ' ل.ل (لنا)');
+    if (N(l) < 0)
+        p.push(fLBP(-l) + ' ل.ل (لكم)');
+    if (N(u) > 0)
+        p.push(fUSD(u) + ' $ (لنا)');
+    if (N(u) < 0)
+        p.push(fUSD(-u) + ' $ (لكم)');
+    return p.length ? p.join(' · ') : 'مسدّد ✓';
+}
 function balText(balL, balU) {
     const a = [];
     if (balL)
@@ -1147,10 +1165,8 @@ function balText(balL, balU) {
     if (balU)
         a.push(fUSD(Math.abs(balU)) + ' $');
     const amt = a.join(' + ');
-    if (balL > 0 || balU > 0)
-        return amt + ' (لنا)';
-    if (balL < 0 || balU < 0)
-        return amt + ' (لكم — دفعة زائدة)';
+    if (balL || balU)
+        return balParts(balL, balU);
     return 'لا يوجد رصيد';
 }
 function parseCSV(text) {
@@ -3339,7 +3355,7 @@ function Customers({ openCust }) {
     const printAll = () => {
         const head = printHeader(db, 'كشف ذمم الزبائن', 'بتاريخ ' + fDate(todayISO()));
         const body = [...rows].sort((a, b) => Math.abs(b.balL) - Math.abs(a.balL)).map((r) => {
-            const stt = (r.balL > 0 || r.balU > 0) ? 'لنا' : (r.balL < 0 || r.balU < 0) ? 'لكم' : 'مسدّد';
+            const stt = (r.balL > 0 || r.balU > 0) ? (((r.balL < 0) || (r.balU < 0)) ? 'لنا + لكم' : 'لنا') : (r.balL < 0 || r.balU < 0) ? 'لكم' : 'مسدّد';
             return '<tr><td style="padding:6px">' + esc(r.name) + '</td><td style="padding:6px">' + esc(r.phone || '') + '</td><td style="padding:6px;text-align:center">' + (r.balL ? fLBP(Math.abs(r.balL)) : '—') + '</td><td style="padding:6px;text-align:center">' + (r.balU ? fUSD(Math.abs(r.balU)) : '—') + '</td><td style="padding:6px;text-align:center">' + stt + '</td></tr>';
         }).join('');
         const html = '<div style="font-family:Cairo,Tahoma,sans-serif;direction:rtl;padding:22px;color:#1a1a1a">' + head + '<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#0b6e4f;color:#fff"><th style="padding:7px;text-align:right">الزبون</th><th style="padding:7px">الهاتف</th><th style="padding:7px">ليرة</th><th style="padding:7px">دولار</th><th style="padding:7px">الحالة</th></tr></thead><tbody>' + body + '</tbody></table><div style="margin-top:14px;padding:12px;background:#eef4f1;border-radius:8px;font-weight:800"><div style="display:flex;justify-content:space-between"><span>إجمالي لنا</span><span style="color:#0b6e4f">' + fLBP(lnaL) + ' ل.ل · ' + fUSD(lnaU) + ' $</span></div><div style="display:flex;justify-content:space-between;margin-top:5px"><span>إجمالي لكم</span><span style="color:#c0392b">' + fLBP(alaL) + ' ل.ل · ' + fUSD(alaU) + ' $</span></div></div></div>';
@@ -3379,8 +3395,11 @@ function Customers({ openCust }) {
                             React.createElement("div", { className: "cc-top", onClick: () => openCust({ name: r.name, phone: r.phone }) },
                                 React.createElement("div", { className: "cc-av" }, r.name[0] || '?'),
                                 React.createElement("div", { className: "cc-name" }, r.name),
-                                React.createElement("div", { className: 'cc-bal ' + (owes ? 'neg' : ours ? 'pos' : 'muted') }, ((r.balL ? fLBP(Math.abs(r.balL)) + ' ل.ل' : '') + ((r.balL && r.balU) ? ' · ' : '') + (r.balU ? fUSD(Math.abs(r.balU)) + ' $' : '')) || 'مسدّد ✓'),
-                                React.createElement("div", { className: "cc-sub" }, owes ? 'لنا' : ours ? 'لكم' : 'الحساب نظيف'),
+                                React.createElement("div", { className: "cc-bal2" },
+                                    (!r.balL && !r.balU) ? React.createElement("span", { className: "cc-chip chip-ok" }, "\u0645\u0633\u062F\u0651\u062F \u2713") :
+                                        React.createElement(React.Fragment, null,
+                                            r.balL !== 0 && React.createElement("span", { className: 'cc-chip ' + (r.balL > 0 ? 'chip-lna' : 'chip-lkm') }, (r.balL > 0 ? '\u0644\u0646\u0627 ' : '\u0644\u0643\u0645 ') + fLBP(Math.abs(r.balL)) + ' \u0644.\u0644'),
+                                            r.balU !== 0 && React.createElement("span", { className: 'cc-chip ' + (r.balU > 0 ? 'chip-lna' : 'chip-lkm') }, (r.balU > 0 ? '\u0644\u0646\u0627 ' : '\u0644\u0643\u0645 ') + fUSD(Math.abs(r.balU)) + ' $'))),
                                 ag != null && React.createElement("div", { className: 'cc-sub ' + (ag > 30 ? 'neg' : 'muted'), style: { fontWeight: 700, fontSize: 11 } },
                                     "\u23F1 \u0645\u0646 ",
                                     ag,
@@ -3404,7 +3423,7 @@ function CustEntry({ kind, preset }) {
     const eL = N(lbp), eU = N(usd);
     const nbL = kind === 'debt' ? bL + eL : bL - eL, nbU = kind === 'debt' ? bU + eU : bU - eU;
     const fmtBal = (l, u) => (l ? fLBP(Math.abs(l)) + ' ل.ل' : '') + ((l && u) ? ' · ' : '') + (u ? fUSD(Math.abs(u)) + ' $' : '');
-    const balWord = (l, u) => (l || u) ? fmtBal(l, u) + ((l > 0 || u > 0) ? ' (لنا)' : ' (لكم)') : 'مسدّد ✓';
+    const balWord = (l, u) => balParts(l, u);
     const submit = () => {
         if (!name)
             return ui.toast('اختر الزبون');
@@ -3449,13 +3468,13 @@ function CustEntry({ kind, preset }) {
                     React.createElement("option", { value: "" }, "\u2014 \u0627\u062E\u062A\u0631 \u0627\u0644\u0632\u0628\u0648\u0646 \u2014"),
                     db.customers.map((c) => React.createElement("option", { key: c.id, value: c.name }, c.name)))),
             name && React.createElement("div", { className: 'cust-bal ' + ((bL > 0 || bU > 0) ? 'owes' : (bL < 0 || bU < 0) ? 'credit' : 'clear') },
-                React.createElement("div", { className: "cb-l" }, (bL > 0 || bU > 0) ? '🔴 لنا (دين عليه)' : (bL < 0 || bU < 0) ? '🟢 لكم (رصيد إلو عنا)' : '✅ الحساب مسدّد — ما عليه شي'),
-                (bL || bU) ? React.createElement("div", { className: "cb-a num" }, fmtBal(bL, bU)) : null,
+                React.createElement("div", { className: "cb-l" }, ((bL > 0 || bU > 0) && (bL < 0 || bU < 0)) ? '🔁 حساب مختلط — عملة لنا وعملة لكم' : (bL > 0 || bU > 0) ? '🔴 لنا (دين عليه)' : (bL < 0 || bU < 0) ? '🟢 لكم (رصيد إلو عنا)' : '✅ الحساب مسدّد — ما عليه شي'),
+                (bL || bU) ? React.createElement("div", { className: "cb-a num" }, balParts(bL, bU)) : null,
                 (eL || eU) ? React.createElement("div", { className: "cb-after" },
                     "\u2190 \u0628\u0639\u062F ",
                     kind === 'debt' ? 'الدين' : 'التسديد',
                     ": ",
-                    React.createElement("b", { className: "num" }, (nbL || nbU) ? fmtBal(nbL, nbU) + ((nbL > 0 || nbU > 0) ? ' (لنا)' : ' (لكم)') : 'مسدّد ✓')) : null),
+                    React.createElement("b", { className: "num" }, (nbL || nbU) ? balParts(nbL, nbU) : 'مسدّد ✓')) : null),
             React.createElement("div", { className: "two" },
                 React.createElement(Field, { label: "\u0644\u064A\u0631\u0629 \u0644.\u0644" },
                     React.createElement(Money, { value: lbp, onChange: setLbp })),
@@ -3498,8 +3517,7 @@ function CustStatement({ cust, back }) {
     const db = useDB();
     const ui = useUI();
     const { ev, tot } = custLedger(db, cust.name);
-    const balStr = ((tot.balL > 0 ? fLBP(tot.balL) + ' ل.ل' : tot.balL < 0 ? fLBP(-tot.balL) + ' ل.ل (لكم)' : '')
-        + ((tot.balL > 0 && tot.balU > 0) ? ' و ' : '') + (tot.balU > 0 ? fUSD(tot.balU) + ' $' : '') + ((tot.balL > 0 || tot.balU > 0) ? ' (لنا)' : '')) || 'لا يوجد رصيد مستحق';
+    const balStr = (tot.balL || tot.balU) ? balParts(tot.balL, tot.balU) : 'لا يوجد رصيد مستحق';
     const tmpl = (db.settings.waTemplate || WA_DEFAULT).replace(/\{name\}/g, cust.name).replace(/\{shop\}/g, db.settings.name).replace(/\{balance\}/g, balStr);
     const [msg, setMsg] = useState(tmpl);
     const sendWA = () => { waOpen(cust.phone, msg); ui.toast('عم يفتح واتساب…'); };
