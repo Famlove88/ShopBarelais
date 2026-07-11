@@ -317,6 +317,8 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .cc-chip.chip-lna{background:var(--neg-soft,#fdecec);color:var(--neg,#b91c1c);border-color:rgba(185,28,28,.22)}
 .cc-chip.chip-lkm{background:var(--brand-soft,#e8f4ef);color:var(--brand-2,#0b6e4f);border-color:rgba(11,110,79,.22)}
 .cc-chip.chip-ok{background:var(--surface-2,#f4f6f5);color:var(--muted,#8a938f);border-color:var(--line,#e3e7e5)}
+.cust-counts{display:flex;gap:8px;justify-content:center;margin:0 0 11px;flex-wrap:wrap}
+.cust-counts .cc-chip{font-size:13px;padding:5px 14px}
 @media (min-width:1100px){
   .page{max-width:1040px}
   .cust-grid{grid-template-columns:repeat(3,1fr)}
@@ -528,7 +530,7 @@ const { useState, useEffect, useMemo, useRef, createContext, useContext } = Reac
 const DB_KEY = 'famstore_db_v1';
 const WA_DEFAULT = 'مرحبا {name} 🌹\nهيدا كشف حسابكن لدى {shop}.\nرصيدكم عنّا: {balance}.\nيرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.';
 const BROADCAST_DEFAULT = '🎉 عرض خاص من FAM STORE!\nوصلتنا بضاعة جديدة وأسعار منيحة 📱\nمرحبا فيكن تمرقوا عـالمحل. للاستفسار: 71917163';
-const APP_VERSION = 'v22.5 · 2026-07-11 — رصيد مفصّل لكل عملة (لنا/لكم لكل وحدة)';
+const APP_VERSION = 'v22.7 · 2026-07-11 — رسمي: عداد لنا/لكم/مسدّد + فحص كامل';
 const DEFAULT_SERVICES = () => [{ id: 'whish', name: 'Whish', icon: '💸' }, { id: 'ipick', name: 'iPick', icon: '🎫' }, { id: 'bycel', name: 'ByCel', icon: '📶' }, { id: 'ushare', name: 'Ushare', icon: '🔗' }];
 const USERS_DEFAULT = () => [{ id: 'u_admin', username: 'DAM', password: 'DAM', role: 'admin', active: true, perms: { profit: true, items: true, settings: true, delete: true } }, { id: 'u_fam', username: 'fam', password: 'fam', role: 'cashier', active: true, perms: { profit: false, items: false, settings: false, delete: true } }];
 const blank = () => ({
@@ -3238,7 +3240,7 @@ function Suppliers() {
                 React.createElement("div", { className: "search-box" },
                     React.createElement("input", { placeholder: "\uD83D\uDD0E \u062F\u0648\u0651\u0631 \u0639\u0645\u0648\u0631\u0651\u062F\u2026", value: q, onChange: (e) => setQ(e.target.value) })),
                 flt.length === 0 ? React.createElement(Empty, { ic: "\uD83D\uDD0E", t: "\u0645\u0627 \u0641\u064A \u0646\u062A\u064A\u062C\u0629" }) :
-                    React.createElement("div", { className: "cust-grid" }, [...flt].sort((a, b) => Math.abs(b.balL) - Math.abs(a.balL)).map((r) => {
+                    React.createElement("div", { className: "cust-grid" }, [...flt].sort((a, b) => { const _r = N(db.settings.rate) || 1; const _g = (x) => (x.balL > 0 || x.balU > 0) ? 0 : (x.balL < 0 || x.balU < 0) ? 1 : 2; const _w = (x) => Math.abs(x.balL) + Math.abs(x.balU) * _r; return _g(a) - _g(b) || _w(b) - _w(a); }).map((r) => {
                         const we = r.balL > 0 || r.balU > 0, they = r.balL < 0 || r.balU < 0;
                         return React.createElement("div", { key: r.name, className: "cust-card" },
                             React.createElement("div", { className: "cc-top", style: { cursor: 'default' } },
@@ -3354,7 +3356,7 @@ function Customers({ openCust }) {
     const flt = rows.filter((r) => !q || (r.name || '').includes(q) || (r.phone || '').includes(q));
     const printAll = () => {
         const head = printHeader(db, 'كشف ذمم الزبائن', 'بتاريخ ' + fDate(todayISO()));
-        const body = [...rows].sort((a, b) => Math.abs(b.balL) - Math.abs(a.balL)).map((r) => {
+        const body = [...rows].sort((a, b) => { const _r = N(db.settings.rate) || 1; const _g = (x) => (x.balL > 0 || x.balU > 0) ? 0 : (x.balL < 0 || x.balU < 0) ? 1 : 2; const _w = (x) => Math.abs(x.balL) + Math.abs(x.balU) * _r; return _g(a) - _g(b) || _w(b) - _w(a); }).map((r) => {
             const stt = (r.balL > 0 || r.balU > 0) ? (((r.balL < 0) || (r.balU < 0)) ? 'لنا + لكم' : 'لنا') : (r.balL < 0 || r.balU < 0) ? 'لكم' : 'مسدّد';
             return '<tr><td style="padding:6px">' + esc(r.name) + '</td><td style="padding:6px">' + esc(r.phone || '') + '</td><td style="padding:6px;text-align:center">' + (r.balL ? fLBP(Math.abs(r.balL)) : '—') + '</td><td style="padding:6px;text-align:center">' + (r.balU ? fUSD(Math.abs(r.balU)) : '—') + '</td><td style="padding:6px;text-align:center">' + stt + '</td></tr>';
         }).join('');
@@ -3387,8 +3389,17 @@ function Customers({ openCust }) {
                 React.createElement("div", { className: "search-box" },
                     React.createElement("input", { placeholder: "\uD83D\uDD0E \u062F\u0648\u0651\u0631 \u0639\u0627\u0633\u0645 \u0632\u0628\u0648\u0646 \u0623\u0648 \u0631\u0642\u0645\u2026", value: q, onChange: (e) => setQ(e.target.value) })),
                 React.createElement("button", { className: "btn btn-gold", style: { marginBottom: 10, width: '100%' }, onClick: printAll }, "\uD83D\uDDA8 \u0637\u0628\u0627\u0639\u0629 \u0643\u0634\u0641 \u0643\u0644 \u0627\u0644\u0632\u0628\u0627\u0626\u0646 (PDF)"),
+                (() => { const cnt = { lna: 0, lkm: 0, ok: 0 }; flt.forEach((r) => { if (r.balL > 0 || r.balU > 0)
+                    cnt.lna++;
+                else if (r.balL < 0 || r.balU < 0)
+                    cnt.lkm++;
+                else
+                    cnt.ok++; }); return React.createElement("div", { className: "cust-counts" },
+                    React.createElement("span", { className: "cc-chip chip-lna" }, cnt.lna + " \u0644\u0646\u0627"),
+                    React.createElement("span", { className: "cc-chip chip-lkm" }, cnt.lkm + " \u0644\u0643\u0645"),
+                    React.createElement("span", { className: "cc-chip chip-ok" }, cnt.ok + " \u0645\u0633\u062F\u0651\u062F")); })(),
                 flt.length === 0 ? React.createElement(Empty, { ic: "\uD83D\uDD0E", t: "\u0645\u0627 \u0641\u064A \u0646\u062A\u064A\u062C\u0629" }) :
-                    React.createElement("div", { className: "cust-grid" }, [...flt].sort((a, b) => Math.abs(b.balL) - Math.abs(a.balL)).map((r) => {
+                    React.createElement("div", { className: "cust-grid" }, [...flt].sort((a, b) => { const _r = N(db.settings.rate) || 1; const _g = (x) => (x.balL > 0 || x.balU > 0) ? 0 : (x.balL < 0 || x.balU < 0) ? 1 : 2; const _w = (x) => Math.abs(x.balL) + Math.abs(x.balU) * _r; return _g(a) - _g(b) || _w(b) - _w(a); }).map((r) => {
                         const owes = r.balL > 0 || r.balU > 0, ours = r.balL < 0 || r.balU < 0;
                         const ag = owes ? debtAgeDays(db, r.name) : null;
                         return React.createElement("div", { key: r.name, className: "cust-card" },
