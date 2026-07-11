@@ -523,7 +523,7 @@ const { useState, useEffect, useMemo, useRef, createContext, useContext } = Reac
 const DB_KEY = 'famstore_db_v1';
 const WA_DEFAULT = 'مرحبا {name} 🌹\nهيدا كشف حسابكن لدى {shop}.\nرصيدكم عنّا: {balance}.\nيرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.';
 const BROADCAST_DEFAULT = '🎉 عرض خاص من FAM STORE!\nوصلتنا بضاعة جديدة وأسعار منيحة 📱\nمرحبا فيكن تمرقوا عـالمحل. للاستفسار: 71917163';
-const APP_VERSION = 'v22.2 · 2026-07-10 — توحيد مصطلحات لنا/لكم بكل البرنامج';
+const APP_VERSION = 'v22.3 · 2026-07-11 — إصلاح عاجل: حماية رباعية ضد عواصف الكتابة بالمزامنة';
 const DEFAULT_SERVICES = () => [{ id: 'whish', name: 'Whish', icon: '💸' }, { id: 'ipick', name: 'iPick', icon: '🎫' }, { id: 'bycel', name: 'ByCel', icon: '📶' }, { id: 'ushare', name: 'Ushare', icon: '🔗' }];
 const USERS_DEFAULT = () => [{ id: 'u_admin', username: 'DAM', password: 'DAM', role: 'admin', active: true, perms: { profit: true, items: true, settings: true, delete: true } }, { id: 'u_fam', username: 'fam', password: 'fam', role: 'cashier', active: true, perms: { profit: false, items: false, settings: false, delete: true } }];
 const blank = () => ({
@@ -814,6 +814,25 @@ let _pushT = null;
 function schedulePush() { if (!fbDoc)
     return; setSync('syncing'); if (_pushT)
     clearTimeout(_pushT); _pushT = setTimeout(pushFirebase, 800); }
+/* مصالحة مؤجلة: بدل الدفع الفوري — تأخير عشوائي يمنع تصادم الأجهزة، وقاطع دائرة يمنع أي حلقة مفرغة */
+let _reconT = null;
+let _reconTimes = [];
+function scheduleReconcile() {
+    if (_reconT)
+        return;
+    const nowT = Date.now();
+    _reconTimes = _reconTimes.filter((t) => nowT - t < 60000);
+    if (_reconTimes.length >= 6) {
+        try {
+            console.warn('FAM sync: circuit breaker — توقفت المصالحة التلقائية مؤقتاً');
+        }
+        catch (e) { }
+        setSync('synced');
+        return;
+    }
+    _reconTimes.push(nowT);
+    _reconT = setTimeout(() => { _reconT = null; _db._rev = Date.now(); pushFirebase(); }, 1500 + Math.floor(Math.random() * 2000));
+}
 function lzAvail() { return !!window.LZString; }
 function packCloud(obj) { const j = JSON.stringify(obj); try {
     if (lzAvail())
@@ -914,13 +933,27 @@ function startCloudListeners() {
         catch (e) { }
         setSync('syncing');
         fbDoc.onSnapshot((snap) => {
+            /* تجاهل الصدى المحلي لكتاباتنا نفسها — أهم صمام ضد الحلقات */
+            if (snap.metadata && snap.metadata.hasPendingWrites)
+                return;
             const d = snap.data() || {};
             if (d.cz || d.json) {
                 try {
-                    const remote = unpackCloud(d);
+                    let remoteStr = null;
+                    if (d.z && d.cz && window.LZString)
+                        remoteStr = window.LZString.decompressFromBase64(d.cz);
+                    else if (d.json)
+                        remoteStr = d.json;
+                    const remote = remoteStr ? JSON.parse(remoteStr) : null;
                     if (remote) {
                         remote._rev = d._rev || remote._rev || 0;
-                        const remoteSig = dbSig(normalize(JSON.parse(JSON.stringify(remote))));
+                        /* مقارنة نصية دقيقة (بلا _rev): إذا المحتوى مطابق ما في داعي لأي شي */
+                        const sameContent = JSON.stringify({ ..._db, _rev: 0 }) === JSON.stringify({ ...remote, _rev: 0 });
+                        if (sameContent) {
+                            _db._rev = Math.max(N(_db._rev), N(remote._rev));
+                            setSync('synced');
+                            return;
+                        }
                         const merged = normalize(mergeDb(_db, remote));
                         _db = merged;
                         try {
@@ -928,10 +961,9 @@ function startCloudListeners() {
                         }
                         catch (e) { }
                         subs.forEach((f) => f());
-                        if (dbSig(_db) !== remoteSig) {
-                            /* عنا شي مش موجود عالسحابة — ادفع النسخة المدموجة */
-                            _db._rev = Date.now();
-                            pushFirebase();
+                        if (JSON.stringify({ ..._db, _rev: 0 }) !== JSON.stringify({ ...remote, _rev: 0 })) {
+                            /* عنا محتوى إضافي — مصالحة مؤجلة ومحمية بقاطع دائرة */
+                            scheduleReconcile();
                         }
                         else {
                             setSync('synced');
@@ -942,7 +974,7 @@ function startCloudListeners() {
                 catch (e) { }
             }
             if ((_db._rev || 0) > (d._rev || 0)) {
-                pushFirebase();
+                schedulePush();
             }
             else {
                 setSync('synced');
