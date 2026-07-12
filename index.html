@@ -530,7 +530,7 @@ const { useState, useEffect, useMemo, useRef, createContext, useContext } = Reac
 const DB_KEY = 'famstore_db_v1';
 const WA_DEFAULT = 'مرحبا {name} 🌹\nهيدا كشف حسابكن لدى {shop}.\nرصيدكم عنّا: {balance}.\nيرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.';
 const BROADCAST_DEFAULT = '🎉 عرض خاص من FAM STORE!\nوصلتنا بضاعة جديدة وأسعار منيحة 📱\nمرحبا فيكن تمرقوا عـالمحل. للاستفسار: 71917163';
-const APP_VERSION = 'v23.1 · 2026-07-11 — سد ثغرات: دمج عميق + سجل طوارئ كامل + أداة استرجاع 🚑';
+const APP_VERSION = 'v24.1 · 2026-07-11 — الفحص الأعظم: أرقام عربية + حماية سعر الصرف + تسكير كل الحذوفات';
 const DEFAULT_SERVICES = () => [{ id: 'whish', name: 'Whish', icon: '💸' }, { id: 'ipick', name: 'iPick', icon: '🎫' }, { id: 'bycel', name: 'ByCel', icon: '📶' }, { id: 'ushare', name: 'Ushare', icon: '🔗' }];
 const USERS_DEFAULT = () => [{ id: 'u_admin', username: 'DAM', password: 'DAM', role: 'admin', active: true, perms: { profit: true, items: true, settings: true, delete: true } }, { id: 'u_fam', username: 'fam', password: 'fam', role: 'cashier', active: true, perms: { profit: false, items: false, settings: false, delete: true } }];
 const blank = () => ({
@@ -597,6 +597,8 @@ function loadDB() { try {
         const d = normalize({ ...blank(), ...JSON.parse(r) });
         if (!d._rev)
             d._rev = 1;
+        if (!N(d.fy))
+            d.fy = 1;
         return d;
     }
 }
@@ -758,6 +760,17 @@ function tomb(id) { try {
 catch (e) { } }
 /* دمج قاعدتين: اتحاد كل العمليات حسب id، الأحدث تعديلاً بيربح، والمحذوف بيضل محذوف */
 function mergeDb(a, b) {
+    /* حارس السنة المالية: بعد التقفيل، السنة الأعلى بتربح كاملة — ما في اتحاد بين سنتين */
+    const fa = N(a && a.fy) || 1, fb = N(b && b.fy) || 1;
+    if (fa !== fb) {
+        const win = fa > fb ? a : b;
+        try {
+            return JSON.parse(JSON.stringify(win));
+        }
+        catch (e) {
+            return win;
+        }
+    }
     const newer = (N(a && a._rev) >= N(b && b._rev)) ? a : b;
     const older = newer === a ? b : a;
     let out;
@@ -1067,11 +1080,158 @@ function rescueTargetArr(db, kind, payload) {
     }
     return { arr: db[mp.coll] };
 }
+/* ============ تقفيل السنة المالية: أرشفة + ترحيل كل الأرصدة الافتتاحية ============ */
+function buildYearClose(db) {
+    const rate = N(db.settings.rate) || 1;
+    const t = todayISO();
+    const note = 'رصيد افتتاحي — تقفيل سنة ' + (N(db.fy) || 1);
+    /* ١) الأرصدة الحالية قبل التصفير */
+    const omtB = omtBalance(db);
+    const acc = invStats(db.acc, rate), mob = invStats(db.mob, rate), rc = invStats(db.rec, rate);
+    const cust = custBalances(db), sup = supBalances(db), re = revExp(db);
+    const sc = serviceCash(db), ex = exchCash(db);
+    const supPayL = (db.supPayments || []).reduce((s, x) => s + N(x.lbp), 0);
+    const supPayU = (db.supPayments || []).reduce((s, x) => s + N(x.usd), 0);
+    const cashL = N(db.opening.cashL) + (acc.T.saleL + mob.T.saleL + rc.T.saleL) - (acc.T.costL + mob.T.costL + rc.T.costL) + cust.rows.reduce((s, c) => s + (c.payL - c.debtL), 0) + re.netL + omtB.lbp + sc.l + ex.l - supPayL;
+    const cashU = N(db.opening.cashU) + cust.rows.reduce((s, c) => s + (c.payU - c.debtU), 0) + re.netU + omtB.usd + sc.u + ex.u - supPayU;
+    /* ٢) قاعدة السنة الجديدة: التعريفات بتضل، الحركات بتنصفّر */
+    const fresh = normalize(blank());
+    fresh.fy = (N(db.fy) || 1) + 1;
+    fresh.settings = JSON.parse(JSON.stringify(db.settings || {}));
+    fresh.users = JSON.parse(JSON.stringify(db.users || []));
+    fresh.services = JSON.parse(JSON.stringify(db.services || []));
+    fresh.customers = JSON.parse(JSON.stringify(db.customers || []));
+    fresh.suppliers = JSON.parse(JSON.stringify(db.suppliers || []));
+    fresh.contacts = JSON.parse(JSON.stringify(db.contacts || []));
+    fresh.omtcus = JSON.parse(JSON.stringify(db.omtcus || []));
+    fresh.seq = JSON.parse(JSON.stringify(db.seq || {}));
+    ['acc', 'mob', 'rec'].forEach((k) => { fresh[k].items = JSON.parse(JSON.stringify((db[k] && db[k].items) || [])); });
+    /* ٣) الافتتاحي: منبنيه بالآخر تعويضياً — بعد ما نعرف أثر كل المرحّلات عالكاش */
+    fresh.opening = { cashL: 0, cashU: 0, stockL: acc.T.stockVal + mob.T.stockVal + rc.T.stockVal, services: {} };
+    (db.services || []).forEach((sv) => { const b = serviceBalance(db, sv.name); if (N(b.balL) || N(b.balU))
+        fresh.opening.services[sv.name] = { l: b.balL, u: b.balU }; });
+    /* ٤) رصيد OMT بينرحّل بتعديلات صريحة (بتبين بالسجل) */
+    let ts0 = now();
+    if (omtB.lbp)
+        fresh.omtAdj.unshift({ id: uid(), ts: ts0++, type: (omtB.lbp > 0 ? 'IN LBP' : 'OUT LBP'), amount: Math.abs(omtB.lbp), date: t, note: note });
+    if (omtB.usd)
+        fresh.omtAdj.unshift({ id: uid(), ts: ts0++, type: (omtB.usd > 0 ? 'IN USD' : 'OUT USD'), amount: Math.abs(omtB.usd), date: t, note: note });
+    /* ٥) ذمم الزبائن: دين افتتاحي لكل رصيد لنا + تسديد افتتاحي لكل رصيد لكم */
+    cust.rows.forEach((r) => {
+        const dl = Math.max(0, r.balL), du = Math.max(0, r.balU);
+        const pl = Math.max(0, -r.balL), pu = Math.max(0, -r.balU);
+        if (dl || du)
+            fresh.debts.unshift({ id: uid(), ts: ts0++, name: r.name, lbp: dl, usd: du, desc: note, date: t });
+        if (pl || pu)
+            fresh.payments.unshift({ id: uid(), ts: ts0++, name: r.name, lbp: pl, usd: pu, date: t });
+    });
+    /* ٦) ذمم الموردين */
+    sup.rows.forEach((r) => {
+        const dl = Math.max(0, r.balL), du = Math.max(0, r.balU);
+        const pl = Math.max(0, -r.balL), pu = Math.max(0, -r.balU);
+        if (dl || du)
+            fresh.supDebts.unshift({ id: uid(), ts: ts0++, name: r.name, lbp: dl, usd: du, desc: note, date: t });
+        if (pl || pu)
+            fresh.supPayments.unshift({ id: uid(), ts: ts0++, name: r.name, lbp: pl, usd: pu, date: t });
+    });
+    /* ٧) المخزون: شراء افتتاحي لكل صنف بكميتو الحالية وكلفتو الوسطية */
+    let skipped = 0;
+    [['acc', acc], ['mob', mob], ['rec', rc]].forEach(([k, st]) => {
+        st.rows.forEach((r) => {
+            if (r.stock > 0)
+                fresh[k].purchases.unshift({ id: uid(), ts: ts0++, item: r.name, qty: r.stock, price: Math.round(r.avg), total: Math.round(r.stock * r.avg), curr: 'LBP', date: t });
+            else if (r.stock < 0)
+                skipped++;
+        });
+    });
+    fresh.audit = [{ id: uid(), ts: now(), by: _user || '—', action: 'تقفيل سنة', detail: note + ' — كاش ' + fLBP(cashL) + ' ل.ل / ' + fUSD(cashU) + ' $' }];
+    fresh._tomb = {};
+    /* ٨) الكاش الافتتاحي التعويضي: منحسب أثر كل المرحّلات (ذمم، مخزون، OMT) ومنكمّل الفرق —
+       هيك الصندوق بعد التقفيل = الصندوق قبلو بالمليم، مهما كانت أنواع المرحّلات */
+    const cashOf = (d) => {
+        const a2 = invStats(d.acc, rate), m2 = invStats(d.mob, rate), r2 = invStats(d.rec, rate);
+        const c2 = custBalances(d), re2 = revExp(d);
+        const s2 = serviceCash(d), e2 = exchCash(d), o2 = omtBalance(d);
+        const spL = (d.supPayments || []).reduce((s3, x) => s3 + N(x.lbp), 0);
+        const spU = (d.supPayments || []).reduce((s3, x) => s3 + N(x.usd), 0);
+        return {
+            l: N(d.opening.cashL) + (a2.T.saleL + m2.T.saleL + r2.T.saleL) - (a2.T.costL + m2.T.costL + r2.T.costL) + c2.rows.reduce((s3, c3) => s3 + (c3.payL - c3.debtL), 0) + re2.netL + o2.lbp + s2.l + e2.l - spL,
+            u: N(d.opening.cashU) + c2.rows.reduce((s3, c3) => s3 + (c3.payU - c3.debtU), 0) + re2.netU + o2.usd + s2.u + e2.u - spU
+        };
+    };
+    const carried = cashOf(fresh);
+    fresh.opening.cashL = cashL - carried.l;
+    fresh.opening.cashU = cashU - carried.u;
+    fresh._rev = Date.now();
+    return { fresh, stats: { cashL, cashU, omtL: omtB.lbp, omtU: omtB.usd, custN: cust.rows.filter((r) => r.balL || r.balU).length, supN: sup.rows.filter((r) => r.balL || r.balU).length, stockVal: fresh.opening.stockL, skipped } };
+}
+function YearCloseCard() {
+    const db = useDB();
+    const ui = useUI();
+    const [busy, setBusy] = useState(false);
+    const cu = useCloudUser();
+    const run = () => {
+        /* شروط السلامة قبل أي شي */
+        if (!fbDoc || !window.firebase)
+            return ui.toast('لازم السحابة تكون شغالة للتقفيل', 'out');
+        if (syncState !== 'synced')
+            return ui.toast('استنى المزامنة تخضرّ عالكل قبل التقفيل — وسكّر البرنامج عالأجهزة التانية', 'out');
+        const p = prompt('كلمة سر الحذف للمتابعة:');
+        if (p == null)
+            return;
+        if (!checkDelPass(db, p))
+            return ui.toast('كلمة السر غلط', 'out');
+        const { fresh, stats } = buildYearClose(db);
+        ui.confirm({ title: '🗓️ تقفيل سنة ' + (N(db.fy) || 1) + ' وبدء سنة ' + fresh.fy, desc: 'كل الأرصدة رح تترحّل تلقائياً، وكل حركات السنة الحالية رح تتأرشف عالسحابة وتنزل نسخة JSON عجهازك. الأرشيف بيضل محفوظ للأبد.',
+            lines: [['الكاش المرحّل', fLBP(stats.cashL) + ' ل.ل · ' + fUSD(stats.cashU) + ' $'], ['رصيد OMT المرحّل', fLBP(stats.omtL) + ' ل.ل · ' + fUSD(stats.omtU) + ' $'], ['قيمة المخزون', fLBP(stats.stockVal) + ' ل.ل'], ['زبائن برصيد', String(stats.custN)], ['موردين برصيد', String(stats.supN)], stats.skipped ? ['⚠️ أصناف مخزونها سالب (ما بتترحّل)', String(stats.skipped)] : ['فحص المخزون', 'سليم ✓']],
+            danger: true, okText: 'تقفيل نهائي', onOk: () => {
+                const word = prompt('للتأكيد النهائي اكتب: اقفال');
+                if (word !== 'اقفال')
+                    return ui.toast('ما تأكدت الكلمة — ما صار شي');
+                setBusy(true);
+                const oldFy = N(db.fy) || 1;
+                /* ١) نسخة JSON عالجهاز فوراً */
+                try {
+                    const blob = new Blob([JSON.stringify(_db, null, 2)], { type: 'application/json' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = 'famstore-archive-FY' + oldFy + '-' + todayISO() + '.json';
+                    a.click();
+                }
+                catch (e) { }
+                /* ٢) أرشيف دائم عالسحابة — وما منكفي إلا إذا نجح */
+                firebase.firestore().collection('famstore').doc('archive-fy' + oldFy).set({ ...packCloud(_db), fy: oldFy, closedAt: Date.now(), closedBy: _user || '—' }).then(() => {
+                    /* ٣) اعتماد السنة الجديدة ودفعها */
+                    _db = fresh;
+                    try {
+                        localStorage.setItem(DB_KEY, JSON.stringify(_db));
+                    }
+                    catch (e) { }
+                    subs.forEach((f) => f());
+                    pushFirebase();
+                    setBusy(false);
+                    ui.toast('🗓️ تمّ التقفيل — أهلاً بسنة ' + fresh.fy 
+                        + ' ✓ الأرشيف محفوظ بالسحابة وبجهازك', 'ok');
+                }).catch((e) => { setBusy(false); ui.toast('وقف التقفيل: ما قدرنا نحفظ الأرشيف بالسحابة (' + ((e && e.code) || 'خطأ') + ') — ما تغيّر ولا شي', 'out'); });
+            } });
+    };
+    return React.createElement("div", { className: "card", style: { borderColor: 'var(--gold, #a8781c)' } },
+        React.createElement("div", { className: "sec-h tight" },
+            React.createElement("div", { className: "bar" }),
+            React.createElement("h2", null, "\uD83D\uDDD3\uFE0F \u062A\u0642\u0641\u064A\u0644 \u0627\u0644\u0633\u0646\u0629 \u0627\u0644\u0645\u0627\u0644\u064A\u0629"),
+            React.createElement("span", { className: "right num" }, "\u0633\u0646\u0629 " + (N(db.fy) || 1))),
+        React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 0, marginBottom: 8 } }, "\u0628\u064A\u0623\u0631\u0634\u0641 \u0643\u0644 \u062D\u0631\u0643\u0627\u062A \u0627\u0644\u0633\u0646\u0629 (\u0628\u062A\u0636\u0644 \u0645\u062D\u0641\u0648\u0638\u0629 \u0644\u0644\u0623\u0628\u062F) \u0648\u0628\u064A\u0631\u062D\u0651\u0644 \u0643\u0644 \u0627\u0644\u0623\u0631\u0635\u062F\u0629: \u0627\u0644\u0643\u0627\u0634\u060C OMT\u060C \u0630\u0645\u0645 \u0627\u0644\u0632\u0628\u0627\u0626\u0646 \u0648\u0627\u0644\u0645\u0648\u0631\u062F\u064A\u0646\u060C \u0627\u0644\u0645\u062E\u0632\u0648\u0646\u060C \u0648\u0623\u0631\u0635\u062F\u0629 \u0627\u0644\u062E\u062F\u0645\u0627\u062A. \u0627\u0639\u0645\u0644\u0648 \u0645\u0646 \u062C\u0647\u0627\u0632 \u0648\u0627\u062D\u062F \u0648\u0627\u0644\u0628\u0627\u0642\u064A \u0645\u0633\u0643\u0651\u0631\u064A\u0646."),
+        React.createElement("button", { className: "btn btn-gold", disabled: busy, onClick: run }, busy ? '\u0639\u0645 \u064A\u0642\u0641\u0651\u0644\u2026' : '\uD83D\uDDD3\uFE0F \u0628\u062F\u0621 \u0633\u0646\u0629 \u0645\u0627\u0644\u064A\u0629 \u062C\u062F\u064A\u062F\u0629'));
+}
 function RescueCard() {
     const db = useDB();
     const ui = useUI();
     const [busy, setBusy] = useState(false);
     const [found, setFound] = useState(null);
+    const [sel, setSel] = useState({});
+    const wk = () => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); };
+    const [from, setFrom] = useState(wk());
+    const [to, setTo] = useState(todayISO());
     const scan = () => {
         if (!fbTx)
             return ui.toast('السحابة مش جاهزة — تأكد من الربط والنت', 'out');
@@ -1088,22 +1248,31 @@ function RescueCard() {
                 const p = d.payload || {};
                 if (!p.id || !RESCUE_MAP[d.kind])
                     return;
+                const dd = String(d.date || p.date || '').slice(0, 10);
+                if (dd && (dd < from || dd > to))
+                    return;
                 if (ids.has(p.id) || tombs[p.id])
                     return;
                 if (miss.some((x) => x.p.id === p.id))
                     return;
-                miss.push({ kind: d.kind, summary: d.summary || '', by: d.by || '', date: d.date || '', p });
+                miss.push({ kind: d.kind, summary: d.summary || '', by: d.by || '', date: dd, p });
             });
+            miss.sort((a2, b2) => (a2.date < b2.date ? 1 : -1));
+            const s0 = {};
+            miss.forEach((x) => { s0[x.p.id] = true; });
+            setSel(s0);
             setFound(miss);
             setBusy(false);
         }).catch((e) => { setBusy(false); ui.toast('ما قدرت اقرا سجل الطوارئ: ' + ((e && e.code) || ''), 'out'); });
     };
+    const nSel = found ? found.filter((x) => sel[x.p.id]).length : 0;
     const restore = () => {
-        if (!found || !found.length)
-            return;
-        ui.confirm({ title: '🚑 استرجاع الحركات المفقودة', desc: 'رح نرجّع ' + found.length + ' حركة من سجل الطوارئ للملف الرئيسي وتتوزع عالأجهزة كلها.', lines: found.slice(0, 8).map((x) => [RESCUE_MAP[x.kind].label, (x.summary || '').slice(0, 40) + ' · ' + fDate(x.date)]), okText: 'استرجاع الكل', onOk: () => {
+        const picked = (found || []).filter((x) => sel[x.p.id]);
+        if (!picked.length)
+            return ui.toast('ما اخترت ولا حركة');
+        ui.confirm({ title: '🚑 استرجاع الحركات المختارة', desc: 'رح نرجّع ' + picked.length + ' حركة مختارة للملف الرئيسي وتتوزع عالأجهزة.', lines: picked.slice(0, 8).map((x) => [RESCUE_MAP[x.kind].label, (x.summary || '').slice(0, 40) + ' · ' + fDate(x.date)]), okText: 'استرجاع (' + picked.length + ')', onOk: () => {
                 let done = 0;
-                found.forEach((x) => {
+                picked.forEach((x) => {
                     const mp = RESCUE_MAP[x.kind];
                     let target = null;
                     if (mp.store) {
@@ -1121,7 +1290,7 @@ function RescueCard() {
                         done++;
                     }
                 });
-                logAudit('استرجاع', 'رجّعنا ' + done + ' حركة من سجل الطوارئ');
+                logAudit('استرجاع', 'رجّعنا ' + done + ' حركة مختارة من سجل الطوارئ (' + fDate(from) + ' → ' + fDate(to) + ')');
                 saveDB();
                 setFound(null);
                 ui.toast('🚑 رجعت ' + done + ' حركة — رح تتوزع عالأجهزة ✓', 'ok');
@@ -1131,22 +1300,29 @@ function RescueCard() {
         React.createElement("div", { className: "sec-h tight" },
             React.createElement("div", { className: "bar" }),
             React.createElement("h2", null, "\uD83D\uDE91 \u0641\u062D\u0635 \u0648\u0627\u0633\u062A\u0631\u062C\u0627\u0639 \u0627\u0644\u062D\u0631\u0643\u0627\u062A \u0627\u0644\u0645\u0641\u0642\u0648\u062F\u0629")),
-        React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 0, marginBottom: 8 } }, "\u0628\u064A\u0642\u0627\u0631\u0646 \u0633\u062C\u0644 \u0627\u0644\u0637\u0648\u0627\u0631\u0626 \u0628\u0627\u0644\u0633\u062D\u0627\u0628\u0629 (\u0622\u062E\u0631 \u0668\u0660\u0660 \u062D\u0631\u0643\u0629) \u0645\u0639 \u0627\u0644\u0645\u0644\u0641 \u0627\u0644\u062D\u0627\u0644\u064A \u0648\u0628\u064A\u0631\u062C\u0651\u0639 \u0623\u064A \u062D\u0631\u0643\u0629 \u0645\u0633\u062C\u0651\u0644\u0629 \u0648\u0645\u0634 \u0645\u0648\u062C\u0648\u062F\u0629 (\u0627\u0644\u0645\u062D\u0630\u0648\u0641 \u0639\u0645\u062F\u0627\u064B \u0645\u0627 \u0628\u064A\u0631\u062C\u0639)."),
+        React.createElement("div", { className: "two" },
+            React.createElement(Field, { label: "\u0645\u0646 \u062A\u0627\u0631\u064A\u062E" },
+                React.createElement("input", { type: "date", value: from, onChange: (e) => setFrom(e.target.value) })),
+            React.createElement(Field, { label: "\u0644\u062A\u0627\u0631\u064A\u062E" },
+                React.createElement("input", { type: "date", value: to, onChange: (e) => setTo(e.target.value) }))),
         found === null ?
-            React.createElement("button", { className: "btn btn-primary", disabled: busy, onClick: scan }, busy ? '\u0639\u0645 \u064A\u0641\u062D\u0635\u2026' : '\uD83D\uDD0D \u0641\u062D\u0635 \u0627\u0644\u0645\u0641\u0642\u0648\u062F\u0627\u062A \u0647\u0644\u0642')
+            React.createElement("button", { className: "btn btn-primary", disabled: busy, onClick: scan }, busy ? '\u0639\u0645 \u064A\u0641\u062D\u0635\u2026' : '\uD83D\uDD0D \u0641\u062D\u0635 \u0627\u0644\u0645\u0641\u0642\u0648\u062F\u0627\u062A \u0628\u0647\u0627\u0644\u0641\u062A\u0631\u0629')
             : found.length === 0 ?
                 React.createElement(React.Fragment, null,
                     React.createElement("div", { className: "kv" },
-                        React.createElement("div", { className: "k", style: { fontWeight: 800, color: 'var(--brand-2)' } }, "\u2705 \u0645\u0627 \u0641\u064A \u0648\u0644\u0627 \u062D\u0631\u0643\u0629 \u0645\u0641\u0642\u0648\u062F\u0629 \u2014 \u0643\u0644 \u0627\u0644\u0633\u062C\u0644 \u0645\u0648\u062C\u0648\u062F")),
-                    React.createElement("button", { className: "btn btn-ghost btn-sm", onClick: () => setFound(null) }, "\u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u0641\u062D\u0635"))
+                        React.createElement("div", { className: "k", style: { fontWeight: 800, color: 'var(--brand-2)' } }, "\u2705 \u0645\u0627 \u0641\u064A \u0648\u0644\u0627 \u062D\u0631\u0643\u0629 \u0645\u0641\u0642\u0648\u062F\u0629 \u0628\u0647\u0627\u0644\u0641\u062A\u0631\u0629")),
+                    React.createElement("button", { className: "btn btn-ghost btn-sm", onClick: () => setFound(null) }, "\u0641\u062D\u0635 \u0641\u062A\u0631\u0629 \u062A\u0627\u0646\u064A\u0629"))
                 : React.createElement(React.Fragment, null,
                     React.createElement("div", { className: "kv" },
-                        React.createElement("div", { className: "k", style: { fontWeight: 800, color: 'var(--neg)' } }, "\u26A0\uFE0F \u0644\u0642\u064A\u0646\u0627 " + found.length + " \u062D\u0631\u0643\u0629 \u0645\u0633\u062C\u0651\u0644\u0629 \u0648\u0645\u0641\u0642\u0648\u062F\u0629 \u0645\u0646 \u0627\u0644\u0645\u0644\u0641")),
-                    found.slice(0, 15).map((x, i) => React.createElement("div", { key: i, className: "kv" },
-                        React.createElement("div", { className: "k" }, RESCUE_MAP[x.kind].label + ' — ' + (x.summary || '').slice(0, 45)),
+                        React.createElement("div", { className: "k", style: { fontWeight: 800, color: 'var(--neg)' } }, "\u26A0\uFE0F " + found.length + " \u062D\u0631\u0643\u0629 \u0645\u0641\u0642\u0648\u062F\u0629 \u2014 \u0639\u0644\u0651\u0645 \u064A\u0644\u064A \u0628\u062F\u0643 \u062A\u0631\u062C\u0651\u0639\u0648"),
+                        React.createElement("div", { className: "v" },
+                            React.createElement("button", { className: "btn btn-ghost btn-sm", onClick: () => { const s2 = {}; const all = nSel !== found.length; found.forEach((x) => { s2[x.p.id] = all; }); setSel(s2); } }, nSel !== found.length ? '\u062A\u0639\u0644\u064A\u0645 \u0627\u0644\u0643\u0644' : '\u0625\u0632\u0627\u0644\u0629 \u0627\u0644\u062A\u0639\u0644\u064A\u0645'))),
+                    found.map((x, i) => React.createElement("div", { key: x.p.id, className: "kv tappable", style: { cursor: 'pointer' }, onClick: () => setSel({ ...sel, [x.p.id]: !sel[x.p.id] }) },
+                        React.createElement("div", { className: "k" },
+                            React.createElement("span", { style: { marginInlineEnd: 8, fontSize: 15 } }, sel[x.p.id] ? '\u2611\uFE0F' : '\u2B1C'),
+                            RESCUE_MAP[x.kind].label + ' — ' + (x.summary || '').slice(0, 45)),
                         React.createElement("div", { className: "v num" }, fDate(x.date)))),
-                    found.length > 15 && React.createElement("div", { className: "hint", style: { textAlign: 'right' } }, "\u0648" + (found.length - 15) + " \u0643\u0645\u0627\u0646\u2026"),
-                    React.createElement("button", { className: "btn btn-primary", style: { marginTop: 9 }, onClick: restore }, "\uD83D\uDE91 \u0627\u0633\u062A\u0631\u062C\u0627\u0639 \u0627\u0644\u0643\u0644 (" + found.length + ")"),
+                    React.createElement("button", { className: "btn btn-primary", style: { marginTop: 9 }, disabled: nSel === 0, onClick: restore }, "\uD83D\uDE91 \u0627\u0633\u062A\u0631\u062C\u0627\u0639 \u0627\u0644\u0645\u062E\u062A\u0627\u0631 (" + nSel + ")"),
                     React.createElement("button", { className: "btn btn-ghost btn-sm", style: { marginTop: 6 }, onClick: () => setFound(null) }, "\u0625\u0644\u063A\u0627\u0621")));
 }
 function CloudAccountCard() {
@@ -1212,7 +1388,8 @@ const ss = { get: (k) => { try {
     }
     catch (e) { } } };
 /* ============================ HELPERS ============================ */
-const N = (v) => { const x = parseFloat(String(v == null ? '' : v).replace(/,/g, '')); return isFinite(x) ? x : 0; };
+const AR_DIG = { '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9', '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9' };
+const N = (v) => { let s = String(v == null ? '' : v); s = s.replace(/[٠-٩۰-۹]/g, (d) => AR_DIG[d] || d).replace(/[٬،]/g, ',').replace(/٫/g, '.'); const x = parseFloat(s.replace(/,/g, '')); return isFinite(x) ? x : 0; };
 const fLBP = (v) => Math.round(N(v)).toLocaleString('en-US');
 const fUSD = (v) => N(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fDate = (d) => { if (!d)
@@ -1553,11 +1730,11 @@ function buildFeed(db) {
         db[k].sales.forEach((x) => push({ id: x.id, ts: x.ts, date: x.date, etype: 'inv', erec: x, ic: '↗', c: 'var(--brand-2)', bg: 'var(--brand-soft)', t: 'بيع ' + SV[k] + ' — ' + x.item,
             s: N(x.qty) + ' × ' + mc(x.curr, x.price) + ' = ' + mc(x.curr, x.total),
             rows: [['الصنف', x.item], ['الكمية', String(N(x.qty))], ['سعر القطعة', mc(x.curr, x.price)], ['الإجمالي', mc(x.curr, x.total)], ['التاريخ', fDate(x.date)]],
-            del: () => { db[k].sales = db[k].sales.filter((y) => y.id !== x.id); } }));
+            del: () => { (tomb(x.id), db[k].sales = db[k].sales.filter((y) => y.id !== x.id)); } }));
         db[k].purchases.forEach((x) => push({ id: x.id, ts: x.ts, date: x.date, etype: 'inv', erec: x, ic: '↘', c: 'var(--muted)', bg: 'var(--surface-2)', t: 'شراء ' + SV[k] + ' — ' + x.item,
             s: N(x.qty) + ' × ' + mc(x.curr, x.price) + ' = ' + mc(x.curr, x.total),
             rows: [['الصنف', x.item], ['الكمية', String(N(x.qty))], ['سعر القطعة', mc(x.curr, x.price)], ['الإجمالي', mc(x.curr, x.total)], ['التاريخ', fDate(x.date)]],
-            del: () => { db[k].purchases = db[k].purchases.filter((y) => y.id !== x.id); } }));
+            del: () => { (tomb(x.id), db[k].purchases = db[k].purchases.filter((y) => y.id !== x.id)); } }));
     });
     db.payments.forEach((x) => push({ id: x.id, ts: x.ts, date: x.date, etype: 'pay', erec: x, ic: '+', c: 'var(--brand-2)', bg: 'var(--brand-soft)', t: 'تسديد — ' + x.name, s: money2(x.lbp, x.usd),
         rows: [['الزبون', x.name], ['ليرة', fLBP(x.lbp)], ['دولار', fUSD(x.usd)], ['التاريخ', fDate(x.date)]],
@@ -1719,7 +1896,7 @@ function mkEdit(db, type, rec) {
     const custOpts = db.customers.map((c) => [c.name, c.name]);
     switch (type) {
         case 'omt': return { title: 'تعديل حوالة', fields: [{ k: 'dir', label: 'النوع', kind: 'select', opts: [['IN', 'دخول'], ['OUT', 'خروج']] }, { k: 'lbp', label: 'ليرة ل.ل', kind: 'money' }, { k: 'usd', label: 'دولار $', kind: 'usd' }, { k: 'date', label: 'التاريخ', kind: 'date' }] };
-        case 'exch': return { title: 'تعديل صرافة', fields: [{ k: 'type', label: 'النوع', kind: 'select', opts: [['USD', 'دولار→ليرة'], ['LBP', 'ليرة→دولار']] }, { k: 'amount', label: 'المبلغ', kind: 'money' }, { k: 'rate', label: 'السعر', kind: 'money' }, { k: 'date', label: 'التاريخ', kind: 'date' }], recompute: (r) => { r.total = r.type === 'USD' ? N(r.amount) * N(r.rate) : N(r.amount) / N(r.rate); } };
+        case 'exch': return { title: 'تعديل صرافة', fields: [{ k: 'type', label: 'النوع', kind: 'select', opts: [['USD', 'دولار→ليرة'], ['LBP', 'ليرة→دولار']] }, { k: 'amount', label: 'المبلغ', kind: 'money' }, { k: 'rate', label: 'السعر', kind: 'money' }, { k: 'date', label: 'التاريخ', kind: 'date' }], recompute: (r) => { r.total = r.type === 'USD' ? N(r.amount) * N(r.rate) : (N(r.rate) > 0 ? N(r.amount) / N(r.rate) : 0); } };
         case 'adj': return { title: 'تعديل رصيد OMT', fields: [{ k: 'type', label: 'النوع', kind: 'select', opts: [['IN LBP', 'IN LBP'], ['OUT LBP', 'OUT LBP'], ['IN USD', 'IN USD'], ['OUT USD', 'OUT USD']] }, { k: 'amount', label: 'المبلغ', kind: 'money' }, { k: 'date', label: 'التاريخ', kind: 'date' }] };
         case 'inv': return { title: 'تعديل حركة — ' + rec.item, fields: [{ k: 'item', label: 'اسم الصنف', kind: 'text' }, { k: 'qty', label: 'الكمية', kind: 'qty' }, { k: 'curr', label: 'العملة', kind: 'select', opts: [['LBP', 'ليرة ل.ل'], ['USD', 'دولار $']] }, { k: 'price', label: 'سعر القطعة', kind: 'money' }, { k: 'date', label: 'التاريخ', kind: 'date' }], recompute: (r) => { r.total = N(r.qty) * N(r.price); } };
         case 'svc': return { title: 'تعديل حركة خدمة — كامل', fields: [{ k: 'svc', label: 'اسم الخدمة', kind: 'text' }, { k: 'kind', label: 'النوع', kind: 'select', opts: [['buy', 'شراء (صندوق −)'], ['sell', 'بيع (صندوق +)']] }, { k: 'item', label: 'الصنف (فاضي = رصيد)', kind: 'text' }, { k: 'qty', label: 'الكمية (للأصناف)', kind: 'qty' }, { k: 'curr', label: 'العملة', kind: 'select', opts: [['LBP', 'ليرة ل.ل'], ['USD', 'دولار $']] }, { k: 'amount', label: 'المبلغ الإجمالي', kind: 'money' }, { k: 'cost', label: 'الكلفة الإجمالية (لحساب الربح)', kind: 'money' }, { k: 'date', label: 'التاريخ', kind: 'date' }], recompute: (r) => { if (r.item) {
@@ -2193,6 +2370,8 @@ function OMTExch() {
     const submit = () => {
         if (!N(amt))
             return ui.toast('حط المبلغ');
+        if (N(rate) <= 0)
+            return ui.toast('حط سعر الصرف الصحيح', 'out');
         ui.confirm({ title: 'تأكيد صرافة', desc: type === 'USD' ? 'تحويل دولار إلى ليرة:' : 'تحويل ليرة إلى دولار:',
             lines: [['المبلغ', type === 'USD' ? fUSD(amt) + ' $' : fLBP(amt) + ' ل.ل'], ['سعر الصرف', fLBP(rate)], ['الناتج', type === 'USD' ? fLBP(total) + ' ل.ل' : fUSD(total) + ' $']],
             onOk: () => { const ref = fmtRef('SRF', nextSeq(db, 'exch')); db.omtExch.unshift({ id: uid(), ts: now(), type, amount: N(amt), rate: N(rate), total, date: todayISO(), ref }); logAudit('إضافة', 'صرافة عملة ' + ref); saveDB(); cloudLogTx('exch', (type === 'USD' ? 'دولار→ليرة' : 'ليرة→دولار') + ' ' + (type === 'USD' ? fUSD(amt) + '$' : fLBP(amt)), { type, amount: N(amt), rate: N(rate), total, ref, date: todayISO() }); setAmt(''); ui.toast('🔁 انحفظت الصرافة — ' + (type === 'USD' ? fUSD(N(amt)) + ' $ ← ' + fLBP(total) + ' ل.ل' : fLBP(N(amt)) + ' ل.ل ← ' + fUSD(total) + ' $') + ' · ' + ref, 'gold'); } });
@@ -2899,7 +3078,7 @@ function ServicePage({ svc }) {
                                     readImage(f, (d) => setImg(d)); } })),
                         img && React.createElement("button", { className: "btn btn-ghost btn-sm", onClick: () => setImg('') }, "\u0625\u0632\u0627\u0644\u0629"))),
                 React.createElement("button", { className: "btn btn-ghost", onClick: addItem }, "+ \u0625\u0636\u0627\u0641\u0629 \u0635\u0646\u0641"),
-                items.length > 0 && React.createElement("div", { className: "list", style: { marginTop: 10 } }, items.map((it) => React.createElement("div", { key: it.id, className: "row-item tappable", onClick: () => ui.detail({ title: it.name, rows: [['الاسم', it.name], ['سعر الشراء', mc(it.curr || 'LBP', it.buy)], ['سعر البيع', mc(it.curr || 'LBP', it.sell)], ['المخزون', String(stockMap[it.name] || 0) + ' قطعة']], edit: { spec: { title: 'تعديل صنف', fields: [{ k: 'name', label: 'الاسم', kind: 'text' }, { k: 'buy', label: 'سعر الشراء', kind: 'money' }, { k: 'sell', label: 'سعر البيع', kind: 'money' }] }, rec: it }, onDelete: () => { (tomb(it.id), sObj.items = sObj.items.filter((x) => x.id !== it.id)); } }) },
+                items.length > 0 && React.createElement("div", { className: "list", style: { marginTop: 10 } }, items.map((it) => React.createElement("div", { key: it.id, className: "row-item tappable", onClick: () => ui.detail({ title: it.name, rows: [['الاسم', it.name], ['سعر الشراء', mc(it.curr || 'LBP', it.buy)], ['سعر البيع', mc(it.curr || 'LBP', it.sell)], ['المخزون', String(stockMap[it.name] || 0) + ' قطعة']], edit: { spec: { title: 'تعديل صنف', fields: [{ k: 'name', label: 'الاسم', kind: 'text' }, { k: 'buy', label: 'سعر الشراء', kind: 'money' }, { k: 'sell', label: 'سعر البيع', kind: 'money' }] }, rec: it }, onDelete: () => { (tomb(it.id), sObj.items = sObj.items.filter((x) => x.id !== it.id), tomb(it.id)); } }) },
                     resolveImg(it.img) ? React.createElement("div", { className: "av av-img" },
                         React.createElement("img", { src: resolveImg(it.img), alt: "" })) : React.createElement("div", { className: "av", style: { background: 'var(--gold-soft)', color: 'var(--gold)' } }, "\uD83D\uDCE6"),
                     React.createElement("div", { className: "main" },
@@ -2973,7 +3152,7 @@ function Users() {
                 ui.toast('كلمة السر غلط');
             return;
         }
-        db.users = users.filter((x) => x.id !== eu.id);
+        (tomb(eu.id), db.users = users.filter((x) => x.id !== eu.id));
         saveDB();
         setEu(null);
         ui.toast('انحذف المستخدم');
@@ -3048,7 +3227,7 @@ function ContactSheet({ contact, close }) {
     const plus = (days) => { const d = new Date(); d.setDate(d.getDate() + days); setRdate(d.toISOString().slice(0, 10)); };
     const addRem = () => { if (!rdate)
         return ui.toast('حط تاريخ الانتهاء'); setRems([...rems, { id: uid(), type: rtype.trim() || 'تأمين', date: rdate, lead: N(rlead) || 10, note: rnote.trim(), lastSent: 0 }]); setRtype(''); setRdate(''); setRlead('10'); setRnote(''); ui.toast('انضاف التذكير — لا تنسى تحفظ'); };
-    const delRem = (id) => setRems(rems.filter((r) => r.id !== id));
+    const delRem = (id) => (tomb(id), setRems(rems.filter((r) => r.id !== id)));
     const save = () => {
         if (!name.trim())
             return ui.toast('حط الاسم');
@@ -4922,9 +5101,13 @@ function Settings({ onLogout, go }) {
     const exportJSON = () => { const blob = new Blob([JSON.stringify(_db, null, 2)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'famstore-backup-' + todayISO() + '.json'; a.click(); _db.settings.lastBackup = Date.now(); saveDB(); ui.toast('تم تنزيل النسخة ✓'); };
     const importJSON = (e) => { const file = e.target.files[0]; if (!file)
         return; const r = new FileReader(); r.onload = () => { try {
+        const curFy = N(_db.fy) || 1;
         _db = normalize({ ...blank(), ...JSON.parse(r.result) });
         saveDB();
-        ui.toast('تمّ الاستيراد ✓');
+        if ((N(_db.fy) || 1) < curFy)
+            ui.toast('⚠️ استوردت نسخة من سنة مالية أقدم — السحابة رح ترجّع السنة الحالية فوقها. للاطلاع عالأرشيف بس، افصل النت أولاً.', 'out');
+        else
+            ui.toast('تمّ الاستيراد ✓');
     }
     catch (x) {
         ui.toast('ملف غير صالح');
@@ -4949,6 +5132,7 @@ function Settings({ onLogout, go }) {
     return React.createElement("div", { className: "page" },
         React.createElement(CloudAccountCard, null),
         can('settings') && React.createElement(RescueCard, null),
+        admin && React.createElement(YearCloseCard, null),
         can('settings') && React.createElement(React.Fragment, null,
             React.createElement("div", { className: "card" },
                 React.createElement("div", { className: "sec-h tight" },
