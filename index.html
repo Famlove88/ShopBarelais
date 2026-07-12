@@ -530,7 +530,7 @@ const { useState, useEffect, useMemo, useRef, createContext, useContext } = Reac
 const DB_KEY = 'famstore_db_v1';
 const WA_DEFAULT = 'مرحبا {name} 🌹\nهيدا كشف حسابكن لدى {shop}.\nرصيدكم عنّا: {balance}.\nيرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.';
 const BROADCAST_DEFAULT = '🎉 عرض خاص من FAM STORE!\nوصلتنا بضاعة جديدة وأسعار منيحة 📱\nمرحبا فيكن تمرقوا عـالمحل. للاستفسار: 71917163';
-const APP_VERSION = 'v22.7 · 2026-07-11 — رسمي: عداد لنا/لكم/مسدّد + فحص كامل';
+const APP_VERSION = 'v23.1 · 2026-07-11 — سد ثغرات: دمج عميق + سجل طوارئ كامل + أداة استرجاع 🚑';
 const DEFAULT_SERVICES = () => [{ id: 'whish', name: 'Whish', icon: '💸' }, { id: 'ipick', name: 'iPick', icon: '🎫' }, { id: 'bycel', name: 'ByCel', icon: '📶' }, { id: 'ushare', name: 'Ushare', icon: '🔗' }];
 const USERS_DEFAULT = () => [{ id: 'u_admin', username: 'DAM', password: 'DAM', role: 'admin', active: true, perms: { profit: true, items: true, settings: true, delete: true } }, { id: 'u_fam', username: 'fam', password: 'fam', role: 'cashier', active: true, perms: { profit: false, items: false, settings: false, delete: true } }];
 const blank = () => ({
@@ -787,6 +787,24 @@ function mergeDb(a, b) {
         out[k] = out[k] || { items: [], sales: [], purchases: [] };
         ['sales', 'purchases', 'items'].forEach((kk) => { out[k][kk] = M(a && a[k] && a[k][kk], b && b[k] && b[k][kk]); });
     });
+    /* دمج عميق: العناصر المتداخلة (عناصر كل خدمة + تذكيرات كل جهة) بتندمج بالاتحاد، مش نسخة جهاز واحد */
+    const deepKids = (key, kidKey) => {
+        const byId = {};
+        const collect = (arr) => (arr || []).forEach((o) => { if (!o || !o.id)
+            return; (byId[o.id] = byId[o.id] || []).push(o); });
+        collect(a && a[key]);
+        collect(b && b[key]);
+        (out[key] || []).forEach((o) => {
+            const vs = byId[o.id] || [];
+            const km = new Map();
+            vs.forEach((v) => (v[kidKey] || []).forEach((kd) => { if (!kd || !kd.id)
+                return; const ex = km.get(kd.id); if (!ex || N(kd._m || kd.ts || 0) > N(ex._m || ex.ts || 0))
+                km.set(kd.id, kd); }));
+            o[kidKey] = Array.from(km.values()).filter((kd) => !tombs[kd.id]);
+        });
+    };
+    deepKids('services', 'items');
+    deepKids('contacts', 'reminders');
     /* العدادات التسلسلية: الأعلى بيربح لمنع تكرار أرقام المراجع */
     out.seq = {};
     const sk = new Set(Object.keys((a && a.seq) || {}).concat(Object.keys((b && b.seq) || {})));
@@ -1017,6 +1035,119 @@ function startCloudListeners() {
         _cloudStarted = false;
         setSync('off');
     }
+}
+/* ============ أداة الاسترجاع: مقارنة سجل الطوارئ txlog مع الملف واسترجاع المفقود ============ */
+const RESCUE_MAP = {
+    omt: { coll: 'omt', label: 'حوالة OMT' },
+    exch: { coll: 'omtExch', label: 'صرافة' },
+    adj: { coll: 'omtAdj', label: 'تعديل رصيد OMT' },
+    acc: { coll: null, store: 'acc', label: 'إكسسوار' },
+    mob: { coll: null, store: 'mob', label: 'موبايل' },
+    rec: { coll: null, store: 'rec', label: 'تعبئة' },
+    svc: { coll: 'other', label: 'خدمة' },
+    svcitem: { coll: 'other', label: 'صنف خدمة' },
+    debt: { coll: 'debts', label: 'دين' },
+    pay: { coll: 'payments', label: 'تسديد' },
+    supowe: { coll: 'supDebts', label: 'علينا لمورّد' },
+    suppay: { coll: 'supPayments', label: 'دفعة مورّد' },
+    rev: { coll: 'revenue', label: 'مدخول' },
+    exp: { coll: 'expenses', label: 'مصروف' },
+    invoice: { coll: 'invoices', label: 'فاتورة' },
+};
+function rescueTargetArr(db, kind, payload) {
+    const mp = RESCUE_MAP[kind];
+    if (!mp)
+        return null;
+    if (mp.store) {
+        const st = db[mp.store];
+        if (!st)
+            return null;
+        /* بيع أو شراء حسب الملخص المسجّل */
+        return { arr: null, store: st };
+    }
+    return { arr: db[mp.coll] };
+}
+function RescueCard() {
+    const db = useDB();
+    const ui = useUI();
+    const [busy, setBusy] = useState(false);
+    const [found, setFound] = useState(null);
+    const scan = () => {
+        if (!fbTx)
+            return ui.toast('السحابة مش جاهزة — تأكد من الربط والنت', 'out');
+        setBusy(true);
+        fbTx.orderBy('ts', 'desc').limit(800).get().then((qs) => {
+            const ids = new Set();
+            const addAll = (arr) => (arr || []).forEach((r) => r && r.id && ids.add(r.id));
+            ['omt', 'omtExch', 'omtAdj', 'other', 'debts', 'payments', 'supDebts', 'supPayments', 'revenue', 'expenses', 'invoices'].forEach((k) => addAll(db[k]));
+            ['acc', 'mob', 'rec'].forEach((k) => { addAll(db[k] && db[k].sales); addAll(db[k] && db[k].purchases); });
+            const tombs = db._tomb || {};
+            const miss = [];
+            qs.forEach((doc) => {
+                const d = doc.data() || {};
+                const p = d.payload || {};
+                if (!p.id || !RESCUE_MAP[d.kind])
+                    return;
+                if (ids.has(p.id) || tombs[p.id])
+                    return;
+                if (miss.some((x) => x.p.id === p.id))
+                    return;
+                miss.push({ kind: d.kind, summary: d.summary || '', by: d.by || '', date: d.date || '', p });
+            });
+            setFound(miss);
+            setBusy(false);
+        }).catch((e) => { setBusy(false); ui.toast('ما قدرت اقرا سجل الطوارئ: ' + ((e && e.code) || ''), 'out'); });
+    };
+    const restore = () => {
+        if (!found || !found.length)
+            return;
+        ui.confirm({ title: '🚑 استرجاع الحركات المفقودة', desc: 'رح نرجّع ' + found.length + ' حركة من سجل الطوارئ للملف الرئيسي وتتوزع عالأجهزة كلها.', lines: found.slice(0, 8).map((x) => [RESCUE_MAP[x.kind].label, (x.summary || '').slice(0, 40) + ' · ' + fDate(x.date)]), okText: 'استرجاع الكل', onOk: () => {
+                let done = 0;
+                found.forEach((x) => {
+                    const mp = RESCUE_MAP[x.kind];
+                    let target = null;
+                    if (mp.store) {
+                        const st = db[mp.store];
+                        if (!st)
+                            return;
+                        target = (x.summary || '').indexOf('شراء') === 0 ? st.purchases : st.sales;
+                    }
+                    else {
+                        db[mp.coll] = db[mp.coll] || [];
+                        target = db[mp.coll];
+                    }
+                    if (target && !target.some((r) => r && r.id === x.p.id)) {
+                        target.unshift(x.p);
+                        done++;
+                    }
+                });
+                logAudit('استرجاع', 'رجّعنا ' + done + ' حركة من سجل الطوارئ');
+                saveDB();
+                setFound(null);
+                ui.toast('🚑 رجعت ' + done + ' حركة — رح تتوزع عالأجهزة ✓', 'ok');
+            } });
+    };
+    return React.createElement("div", { className: "card" },
+        React.createElement("div", { className: "sec-h tight" },
+            React.createElement("div", { className: "bar" }),
+            React.createElement("h2", null, "\uD83D\uDE91 \u0641\u062D\u0635 \u0648\u0627\u0633\u062A\u0631\u062C\u0627\u0639 \u0627\u0644\u062D\u0631\u0643\u0627\u062A \u0627\u0644\u0645\u0641\u0642\u0648\u062F\u0629")),
+        React.createElement("div", { className: "hint", style: { textAlign: 'right', marginTop: 0, marginBottom: 8 } }, "\u0628\u064A\u0642\u0627\u0631\u0646 \u0633\u062C\u0644 \u0627\u0644\u0637\u0648\u0627\u0631\u0626 \u0628\u0627\u0644\u0633\u062D\u0627\u0628\u0629 (\u0622\u062E\u0631 \u0668\u0660\u0660 \u062D\u0631\u0643\u0629) \u0645\u0639 \u0627\u0644\u0645\u0644\u0641 \u0627\u0644\u062D\u0627\u0644\u064A \u0648\u0628\u064A\u0631\u062C\u0651\u0639 \u0623\u064A \u062D\u0631\u0643\u0629 \u0645\u0633\u062C\u0651\u0644\u0629 \u0648\u0645\u0634 \u0645\u0648\u062C\u0648\u062F\u0629 (\u0627\u0644\u0645\u062D\u0630\u0648\u0641 \u0639\u0645\u062F\u0627\u064B \u0645\u0627 \u0628\u064A\u0631\u062C\u0639)."),
+        found === null ?
+            React.createElement("button", { className: "btn btn-primary", disabled: busy, onClick: scan }, busy ? '\u0639\u0645 \u064A\u0641\u062D\u0635\u2026' : '\uD83D\uDD0D \u0641\u062D\u0635 \u0627\u0644\u0645\u0641\u0642\u0648\u062F\u0627\u062A \u0647\u0644\u0642')
+            : found.length === 0 ?
+                React.createElement(React.Fragment, null,
+                    React.createElement("div", { className: "kv" },
+                        React.createElement("div", { className: "k", style: { fontWeight: 800, color: 'var(--brand-2)' } }, "\u2705 \u0645\u0627 \u0641\u064A \u0648\u0644\u0627 \u062D\u0631\u0643\u0629 \u0645\u0641\u0642\u0648\u062F\u0629 \u2014 \u0643\u0644 \u0627\u0644\u0633\u062C\u0644 \u0645\u0648\u062C\u0648\u062F")),
+                    React.createElement("button", { className: "btn btn-ghost btn-sm", onClick: () => setFound(null) }, "\u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u0641\u062D\u0635"))
+                : React.createElement(React.Fragment, null,
+                    React.createElement("div", { className: "kv" },
+                        React.createElement("div", { className: "k", style: { fontWeight: 800, color: 'var(--neg)' } }, "\u26A0\uFE0F \u0644\u0642\u064A\u0646\u0627 " + found.length + " \u062D\u0631\u0643\u0629 \u0645\u0633\u062C\u0651\u0644\u0629 \u0648\u0645\u0641\u0642\u0648\u062F\u0629 \u0645\u0646 \u0627\u0644\u0645\u0644\u0641")),
+                    found.slice(0, 15).map((x, i) => React.createElement("div", { key: i, className: "kv" },
+                        React.createElement("div", { className: "k" }, RESCUE_MAP[x.kind].label + ' — ' + (x.summary || '').slice(0, 45)),
+                        React.createElement("div", { className: "v num" }, fDate(x.date)))),
+                    found.length > 15 && React.createElement("div", { className: "hint", style: { textAlign: 'right' } }, "\u0648" + (found.length - 15) + " \u0643\u0645\u0627\u0646\u2026"),
+                    React.createElement("button", { className: "btn btn-primary", style: { marginTop: 9 }, onClick: restore }, "\uD83D\uDE91 \u0627\u0633\u062A\u0631\u062C\u0627\u0639 \u0627\u0644\u0643\u0644 (" + found.length + ")"),
+                    React.createElement("button", { className: "btn btn-ghost btn-sm", style: { marginTop: 6 }, onClick: () => setFound(null) }, "\u0625\u0644\u063A\u0627\u0621")));
 }
 function CloudAccountCard() {
     const ui = useUI();
@@ -2102,7 +2233,7 @@ function OMTAdj() {
             return ui.toast('حط المبلغ');
         ui.confirm({ title: 'تأكيد تعديل رصيد', desc: 'تعديل يدوي على رصيد OMT:',
             lines: [['النوع', type], ['المبلغ', type.indexOf('USD') >= 0 ? fUSD(amt) + ' $' : fLBP(amt) + ' ل.ل']],
-            onOk: () => { db.omtAdj.unshift({ id: uid(), ts: now(), type, amount: N(amt), date: todayISO() }); logAudit('إضافة', 'تعديل رصيد OMT'); saveDB(); setAmt(''); ui.toast('⚖️ انحفظ تعديل رصيد OMT — ' + type + ' ' + fLBP(N(amt)), 'ok'); } });
+            onOk: () => { const rec = { id: uid(), ts: now(), type, amount: N(amt), date: todayISO() }; db.omtAdj.unshift(rec); cloudLogTx('adj', 'تعديل OMT ' + type + ' ' + fLBP(N(amt)), rec); logAudit('إضافة', 'تعديل رصيد OMT'); saveDB(); setAmt(''); ui.toast('⚖️ انحفظ تعديل رصيد OMT — ' + type + ' ' + fLBP(N(amt)), 'ok'); } });
     };
     return React.createElement(React.Fragment, null,
         React.createElement("div", { className: "card" },
@@ -3460,14 +3591,21 @@ function CustEntry({ kind, preset }) {
                 setUsd('');
                 setDesc('');
                 ui.toast((kind === 'debt' ? '📤 انحفظ دين على ' : '✅ انحفظ تسديد من ') + name + ' — ' + amtTxt + ' · الرصيد صار: ' + balWord(nbL, nbU), kind === 'debt' ? 'out' : 'in');
-                if (kind === 'pay' && phone) {
-                    const waMsg = 'مرحبا ' + name + ' 🌟\n' +
-                        'وصل تسليم من ' + (db.settings.name || 'المحل') + ':\n' +
-                        '✅ استلمنا منك: ' + amtTxt + '\n' +
-                        '📅 بتاريخ: ' + fDate(todayISO()) + '\n' +
-                        '💼 رصيدك بعد التسديد: ' + balWord(nbL, nbU) + '\n' +
-                        'شكراً لثقتك 🙏';
-                    setTimeout(() => ui.confirm({ title: '📲 إيصال واتساب', desc: 'تبعت للزبون إيصال تسديد رسمي؟', lines: [['الزبون', name], ['الرقم', phone], ['المبلغ', amtTxt], ['الرصيد الباقي', balWord(nbL, nbU)]], okText: 'إرسال الإيصال', onOk: () => { waOpen(phone, waMsg); } }), 250);
+                if (phone) {
+                    const waMsg = kind === 'pay' ?
+                        ('مرحبا ' + name + ' 🌟\n' +
+                            'وصل تسليم من ' + (db.settings.name || 'المحل') + ':\n' +
+                            '✅ استلمنا منك: ' + amtTxt + '\n' +
+                            '📅 بتاريخ: ' + fDate(todayISO()) + '\n' +
+                            '💼 رصيدك بعد التسديد: ' + balWord(nbL, nbU) + '\n' +
+                            'شكراً لثقتك 🙏') :
+                        ('مرحبا ' + name + ' 🌟\n' +
+                            'إشعار من ' + (db.settings.name || 'المحل') + ':\n' +
+                            '📌 سجّلنا لكم اليوم: ' + amtTxt + (desc ? ' (' + desc + ')' : '') + '\n' +
+                            '📅 بتاريخ: ' + fDate(todayISO()) + '\n' +
+                            '💼 الحساب الكامل: ' + balWord(nbL, nbU) + '\n' +
+                            'شكراً لتعاملكم 🙏');
+                    setTimeout(() => ui.confirm({ title: kind === 'pay' ? '📲 إيصال واتساب' : '📲 إشعار دين واتساب', desc: kind === 'pay' ? 'تبعت للزبون إيصال تسديد رسمي؟' : 'تبعت للزبون إشعار بالدين الجديد وحسابو الكامل؟', lines: [['الزبون', name], ['الرقم', phone], [kind === 'pay' ? 'المبلغ' : 'دين اليوم', amtTxt], ['الحساب الكامل', balWord(nbL, nbU)]], okText: kind === 'pay' ? 'إرسال الإيصال' : 'إرسال الإشعار', onOk: () => { waOpen(phone, waMsg); } }), 250);
                 }
             } });
     };
@@ -3651,7 +3789,7 @@ function REEntry({ kind }) {
             return ui.toast('حط مبلغ');
         ui.confirm({ title: kind === 'rev' ? 'تأكيد مدخول' : 'تأكيد مصروف', desc: (kind === 'rev' ? 'مدخول: ' : 'مصروف: ') + item, danger: kind !== 'rev',
             lines: [['البند', item], ['التصنيف', kind === 'exp' ? cat : ''], ['ليرة', N(lbp) ? fLBP(lbp) + ' ل.ل' : ''], ['دولار', N(usd) ? fUSD(usd) + ' $' : '']],
-            onOk: () => { arr.unshift({ id: uid(), ts: now(), item, lbp: N(lbp), usd: N(usd), date: todayISO(), cat: kind === 'exp' ? cat : '' }); logAudit('إضافة', (kind === 'rev' ? 'مدخول' : 'مصروف · ' + cat) + ' — ' + item); saveDB(); setLbp(''); setUsd(''); ui.toast((kind === 'rev' ? '✅ انحفظ مدخول — ' : '📤 انحفظ مصروف — ') + item + ' ' + money2(N(lbp), N(usd)), kind === 'rev' ? 'in' : 'out'); } });
+            onOk: () => { const rec = { id: uid(), ts: now(), item, lbp: N(lbp), usd: N(usd), date: todayISO(), cat: kind === 'exp' ? cat : '' }; arr.unshift(rec); cloudLogTx(kind === 'rev' ? 'rev' : 'exp', item + ' ' + money2(N(lbp), N(usd)), rec); logAudit('إضافة', (kind === 'rev' ? 'مدخول' : 'مصروف · ' + cat) + ' — ' + item); saveDB(); setLbp(''); setUsd(''); ui.toast((kind === 'rev' ? '✅ انحفظ مدخول — ' : '📤 انحفظ مصروف — ') + item + ' ' + money2(N(lbp), N(usd)), kind === 'rev' ? 'in' : 'out'); } });
     };
     const addProd = () => { const v = newp.trim(); if (!v)
         return; if (!db.products.includes(v))
@@ -3710,7 +3848,7 @@ function Invoice() {
             return ui.toast('ضيف بنود أوّلاً');
         ui.confirm({ title: 'تأكيد الفاتورة', desc: 'فاتورة #' + num + (cust ? (' — ' + cust) : ''),
             lines: [['عدد البنود', String(lines.length)], ['المجموع', fLBP(total) + ' ل.ل']],
-            onOk: () => { db.invoices.unshift({ id: uid(), ts: now(), number: num, cust, date: todayISO(), lines, total }); logAudit('إضافة', 'فاتورة #' + num + (cust ? ' — ' + cust : '')); saveDB(); ui.toast('🧾 انحفظت الفاتورة #' + num + ' — ' + fLBP(total) + ' ل.ل', 'gold'); setLines([]); setCust(''); setNum(invNumber()); } });
+            onOk: () => { (() => { const rec = { id: uid(), ts: now(), number: num, cust, date: todayISO(), lines, total }; db.invoices.unshift(rec); cloudLogTx('invoice', 'فاتورة #' + num + ' — ' + fLBP(total), rec); })(); logAudit('إضافة', 'فاتورة #' + num + (cust ? ' — ' + cust : '')); saveDB(); ui.toast('🧾 انحفظت الفاتورة #' + num + ' — ' + fLBP(total) + ' ل.ل', 'gold'); setLines([]); setCust(''); setNum(invNumber()); } });
     };
     return React.createElement("div", { className: "page" },
         React.createElement("div", { className: "card inv-head" },
@@ -4810,6 +4948,7 @@ function Settings({ onLogout, go }) {
     };
     return React.createElement("div", { className: "page" },
         React.createElement(CloudAccountCard, null),
+        can('settings') && React.createElement(RescueCard, null),
         can('settings') && React.createElement(React.Fragment, null,
             React.createElement("div", { className: "card" },
                 React.createElement("div", { className: "sec-h tight" },
