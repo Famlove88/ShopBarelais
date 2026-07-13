@@ -530,7 +530,7 @@ const { useState, useEffect, useMemo, useRef, createContext, useContext } = Reac
 const DB_KEY = 'famstore_db_v1';
 const WA_DEFAULT = 'مرحبا {name} 🌹\nهيدا كشف حسابكن لدى {shop}.\nرصيدكم عنّا: {balance}.\nيرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.';
 const BROADCAST_DEFAULT = '🎉 عرض خاص من FAM STORE!\nوصلتنا بضاعة جديدة وأسعار منيحة 📱\nمرحبا فيكن تمرقوا عـالمحل. للاستفسار: 71917163';
-const APP_VERSION = 'v24.2 · 2026-07-11 — إصلاح جذري: التبني بالمكان (بند المداخيل ما بيطير)';
+const APP_VERSION = 'v24.3 · 2026-07-11 — 🛡️ حارس ذاتي: أي بند بيطير بيرجع لحالو خلال ثواني';
 const DEFAULT_SERVICES = () => [{ id: 'whish', name: 'Whish', icon: '💸' }, { id: 'ipick', name: 'iPick', icon: '🎫' }, { id: 'bycel', name: 'ByCel', icon: '📶' }, { id: 'ushare', name: 'Ushare', icon: '🔗' }];
 const USERS_DEFAULT = () => [{ id: 'u_admin', username: 'DAM', password: 'DAM', role: 'admin', active: true, perms: { profit: true, items: true, settings: true, delete: true } }, { id: 'u_fam', username: 'fam', password: 'fam', role: 'cashier', active: true, perms: { profit: false, items: false, settings: false, delete: true } }];
 const blank = () => ({
@@ -743,6 +743,37 @@ function logAudit(action, detail) { try {
     _db.audit = [{ id: uid(), ts: now(), by: _user, action, detail }, ...(_db.audit || [])].slice(0, 300);
 }
 catch (e) { } }
+/* حارس البند: بعد ٥ ثواني من أي حفظ مالي، منتأكد إنه السجل بعدو بقاعدة البيانات الحية —
+   إذا اختفى لأي سبب (مرجع ميت، سباق مزامنة، نسخة قديمة عم تقصف) منرجّعو فوراً ومنسجّل الحادثة */
+function guardRec(pathFn, rec, label) {
+    try {
+        if (!rec || !rec.id)
+            return;
+        const check = (attempt) => {
+            try {
+                if (_db._tomb && _db._tomb[rec.id])
+                    return; /* انحذف عمداً — ما منتدخل */
+                const arr = pathFn(_db);
+                if (!Array.isArray(arr))
+                    return;
+                if (!arr.some((r) => r && r.id === rec.id)) {
+                    arr.unshift(rec);
+                    logAudit('إنقاذ تلقائي', (label || 'حركة') + ' — رجعت بعد اختفاء (فحص ' + attempt + ')');
+                    saveDB();
+                    try {
+                        console.warn('FAM guard: أنقذنا ' + (label || '') + ' ' + rec.id);
+                    }
+                    catch (e2) { }
+                }
+                if (attempt < 3)
+                    setTimeout(() => check(attempt + 1), 6000);
+            }
+            catch (e3) { }
+        };
+        setTimeout(() => check(1), 5000);
+    }
+    catch (e) { }
+}
 function saveDB() { _db._rev = Date.now(); try {
     localStorage.setItem(DB_KEY, JSON.stringify(_db));
 }
@@ -2380,7 +2411,7 @@ function OMTTransfer() {
             return ui.toast('حط مبلغ أوّلاً');
         ui.confirm({ title: 'تأكيد حوالة OMT', desc: dir === 'IN' ? 'تسجيل حوالة دخول (IN):' : 'تسجيل حوالة خروج (OUT):',
             lines: [['النوع', dir === 'IN' ? 'دخول (IN)' : 'خروج (OUT)'], ['ليرة', N(lbp) ? fLBP(lbp) + ' ل.ل' : ''], ['دولار', N(usd) ? fUSD(usd) + ' $' : '']],
-            onOk: () => { const ref = fmtRef('OMT', nextSeq(db, 'omt')); db.omt.unshift({ id: uid(), ts: now(), dir, lbp: N(lbp), usd: N(usd), date: todayISO(), ref }); logAudit('إضافة', 'OMT ' + (dir === 'IN' ? 'دخول' : 'خروج') + ' ' + money2(N(lbp), N(usd))); saveDB(); cloudLogTx('omt', (dir === 'IN' ? 'دخول' : 'خروج') + ' ' + money2(N(lbp), N(usd)), { dir, lbp: N(lbp), usd: N(usd), ref, date: todayISO() }); setLbp(''); setUsd(''); ui.toast((dir === 'IN' ? '✅ انحفظت حوالة دخول IN — ' : '📤 انحفظت حوالة خروج OUT — ') + money2(N(lbp), N(usd)) + ' · ' + ref, dir === 'IN' ? 'in' : 'out'); } });
+            onOk: () => { const ref = fmtRef('OMT', nextSeq(db, 'omt')); const orec = { id: uid(), ts: now(), dir, lbp: N(lbp), usd: N(usd), date: todayISO(), ref }; db.omt.unshift(orec); guardRec((d) => d.omt, orec, 'حوالة OMT'); logAudit('إضافة', 'OMT ' + (dir === 'IN' ? 'دخول' : 'خروج') + ' ' + money2(N(lbp), N(usd))); saveDB(); cloudLogTx('omt', (dir === 'IN' ? 'دخول' : 'خروج') + ' ' + money2(N(lbp), N(usd)), { dir, lbp: N(lbp), usd: N(usd), ref, date: todayISO() }); setLbp(''); setUsd(''); ui.toast((dir === 'IN' ? '✅ انحفظت حوالة دخول IN — ' : '📤 انحفظت حوالة خروج OUT — ') + money2(N(lbp), N(usd)) + ' · ' + ref, dir === 'IN' ? 'in' : 'out'); } });
     };
     return React.createElement(React.Fragment, null,
         React.createElement("div", { className: "card" },
@@ -2410,7 +2441,7 @@ function OMTExch() {
             return ui.toast('حط سعر الصرف الصحيح', 'out');
         ui.confirm({ title: 'تأكيد صرافة', desc: type === 'USD' ? 'تحويل دولار إلى ليرة:' : 'تحويل ليرة إلى دولار:',
             lines: [['المبلغ', type === 'USD' ? fUSD(amt) + ' $' : fLBP(amt) + ' ل.ل'], ['سعر الصرف', fLBP(rate)], ['الناتج', type === 'USD' ? fLBP(total) + ' ل.ل' : fUSD(total) + ' $']],
-            onOk: () => { const ref = fmtRef('SRF', nextSeq(db, 'exch')); db.omtExch.unshift({ id: uid(), ts: now(), type, amount: N(amt), rate: N(rate), total, date: todayISO(), ref }); logAudit('إضافة', 'صرافة عملة ' + ref); saveDB(); cloudLogTx('exch', (type === 'USD' ? 'دولار→ليرة' : 'ليرة→دولار') + ' ' + (type === 'USD' ? fUSD(amt) + '$' : fLBP(amt)), { type, amount: N(amt), rate: N(rate), total, ref, date: todayISO() }); setAmt(''); ui.toast('🔁 انحفظت الصرافة — ' + (type === 'USD' ? fUSD(N(amt)) + ' $ ← ' + fLBP(total) + ' ل.ل' : fLBP(N(amt)) + ' ل.ل ← ' + fUSD(total) + ' $') + ' · ' + ref, 'gold'); } });
+            onOk: () => { const ref = fmtRef('SRF', nextSeq(db, 'exch')); const erec = { id: uid(), ts: now(), type, amount: N(amt), rate: N(rate), total, date: todayISO(), ref }; db.omtExch.unshift(erec); guardRec((d) => d.omtExch, erec, 'صرافة'); logAudit('إضافة', 'صرافة عملة ' + ref); saveDB(); cloudLogTx('exch', (type === 'USD' ? 'دولار→ليرة' : 'ليرة→دولار') + ' ' + (type === 'USD' ? fUSD(amt) + '$' : fLBP(amt)), { type, amount: N(amt), rate: N(rate), total, ref, date: todayISO() }); setAmt(''); ui.toast('🔁 انحفظت الصرافة — ' + (type === 'USD' ? fUSD(N(amt)) + ' $ ← ' + fLBP(total) + ' ل.ل' : fLBP(N(amt)) + ' ل.ل ← ' + fUSD(total) + ' $') + ' · ' + ref, 'gold'); } });
     };
     return React.createElement(React.Fragment, null,
         React.createElement("div", { className: "card" },
@@ -2448,7 +2479,7 @@ function OMTAdj() {
             return ui.toast('حط المبلغ');
         ui.confirm({ title: 'تأكيد تعديل رصيد', desc: 'تعديل يدوي على رصيد OMT:',
             lines: [['النوع', type], ['المبلغ', type.indexOf('USD') >= 0 ? fUSD(amt) + ' $' : fLBP(amt) + ' ل.ل']],
-            onOk: () => { const rec = { id: uid(), ts: now(), type, amount: N(amt), date: todayISO() }; db.omtAdj.unshift(rec); cloudLogTx('adj', 'تعديل OMT ' + type + ' ' + fLBP(N(amt)), rec); logAudit('إضافة', 'تعديل رصيد OMT'); saveDB(); setAmt(''); ui.toast('⚖️ انحفظ تعديل رصيد OMT — ' + type + ' ' + fLBP(N(amt)), 'ok'); } });
+            onOk: () => { const rec = { id: uid(), ts: now(), type, amount: N(amt), date: todayISO() }; db.omtAdj.unshift(rec); cloudLogTx('adj', 'تعديل OMT ' + type + ' ' + fLBP(N(amt)), rec); guardRec((d) => d.omtAdj, rec, 'تعديل OMT'); logAudit('إضافة', 'تعديل رصيد OMT'); saveDB(); setAmt(''); ui.toast('⚖️ انحفظ تعديل رصيد OMT — ' + type + ' ' + fLBP(N(amt)), 'ok'); } });
     };
     return React.createElement(React.Fragment, null,
         React.createElement("div", { className: "card" },
@@ -2682,7 +2713,7 @@ function InvEntry({ storeKey, kind }) {
             lines: [['الصنف', item], ['الكمية', String(q) + ' قطعة'], ['سعر القطعة', mc(curr, N(price))], ['الإجمالي', mc(curr, total)], ['المخزون بعد العملية', String(stockAfter) + ' قطعة']],
             onOk: () => {
                 const rec = { id: uid(), ts: now(), item, qty: q, price: N(price), total, curr, date: todayISO() };
-                (kind === 'sell' ? store.sales : store.purchases).unshift(rec);
+                (kind === 'sell' ? store.sales : store.purchases).unshift(rec); guardRec((d) => kind === 'sell' ? d[storeKey].sales : d[storeKey].purchases, rec, kind === 'sell' ? 'بيع بضاعة' : 'شراء بضاعة');
                 logAudit('إضافة', (kind === 'sell' ? 'بيع' : 'شراء') + ' — ' + item);
                 saveDB();
                 cloudLogTx(storeKey, (kind === 'sell' ? 'بيع' : 'شراء') + ' ' + item + ' ×' + q, rec);
@@ -3003,7 +3034,7 @@ function ServicePage({ svc }) {
             return ui.toast('حط المبلغ');
         ui.confirm({ title: 'تأكيد حركة رصيد — ' + svc, desc: svc + ' — ' + (kind === 'sell' ? 'بيع رصيد (بيزيد الصندوق)' : 'شراء/تعبئة رصيد (بينقص الصندوق)') + ':',
             lines: [['الخدمة', svc], ['النوع', kind === 'sell' ? 'بيع رصيد' : 'شراء رصيد'], ['المبلغ', mc(curr, amt)], ['تأثير الصندوق', (kind === 'sell' ? '+ ' : '− ') + mc(curr, amt)]],
-            onOk: () => { db.other.unshift({ id: uid(), ts: now(), svc, kind, curr, amount: N(amt), date: todayISO() }); logAudit('إضافة', 'خدمة ' + svc + ' ' + (kind === 'sell' ? 'بيع' : 'شراء') + ' ' + mc(curr, N(amt))); saveDB(); cloudLogTx('svc', svc + ' ' + (kind === 'sell' ? 'بيع رصيد' : 'شراء رصيد') + ' ' + mc(curr, N(amt)), { svc, kind, curr, amount: N(amt), date: todayISO() }); setAmt(''); ui.toast((kind === 'sell' ? '✅ انحفظ بيع ' : '📤 انحفظ شراء ') + svc + ' — ' + mc(curr, N(amt)), kind === 'sell' ? 'in' : 'out'); } });
+            onOk: () => { const vrec = { id: uid(), ts: now(), svc, kind, curr, amount: N(amt), date: todayISO() }; db.other.unshift(vrec); guardRec((d) => d.other, vrec, 'خدمة'); logAudit('إضافة', 'خدمة ' + svc + ' ' + (kind === 'sell' ? 'بيع' : 'شراء') + ' ' + mc(curr, N(amt))); saveDB(); cloudLogTx('svc', svc + ' ' + (kind === 'sell' ? 'بيع رصيد' : 'شراء رصيد') + ' ' + mc(curr, N(amt)), { svc, kind, curr, amount: N(amt), date: todayISO() }); setAmt(''); ui.toast((kind === 'sell' ? '✅ انحفظ بيع ' : '📤 انحفظ شراء ') + svc + ' — ' + mc(curr, N(amt)), kind === 'sell' ? 'in' : 'out'); } });
     };
     // ---- items ----
     const [pick, setPick] = useState(''), [ikind, setIkind] = useState('sell'), [iqty, setIqty] = useState('1'), [icurr, setIcurr] = useState('LBP'), [iprice, setIprice] = useState(''), [itotal, setItotal] = useState('');
@@ -3020,7 +3051,7 @@ function ServicePage({ svc }) {
             return ui.toast('حط الكمية');
         ui.confirm({ title: 'تأكيد حركة صنف — ' + svc, desc: (ikind === 'sell' ? 'بيع ' : 'شراء ') + sel.name + ':',
             lines: [['الصنف', sel.name], ['النوع', ikind === 'sell' ? 'بيع' : 'شراء'], ['الكمية', String(N(iqty))], ['السعر', mc(icurr, iprice)], ['الإجمالي', mc(icurr, itotal)], ['تأثير الصندوق', (ikind === 'sell' ? '+ ' : '− ') + mc(icurr, itotal)]],
-            onOk: () => { db.other.unshift({ id: uid(), ts: now(), svc, kind: ikind, item: sel.name, qty: N(iqty), price: N(iprice), curr: icurr, total: N(itotal), amount: N(itotal), cost: N(iqty) * N(sel.buy), date: todayISO() }); logAudit('إضافة', 'خدمة ' + svc + ' · ' + sel.name + ' ×' + N(iqty)); saveDB(); cloudLogTx('svcitem', svc + ' · ' + sel.name + ' ' + (ikind === 'sell' ? 'بيع' : 'شراء') + ' ×' + N(iqty), { svc, kind: ikind, item: sel.name, qty: N(iqty), date: todayISO() }); setIqty('1'); ui.toast((ikind === 'sell' ? '✅ انحفظ بيع ' : '📤 انحفظ شراء ') + sel.name + ' ×' + N(iqty) + ' — ' + mc(icurr, N(itotal)), ikind === 'sell' ? 'in' : 'out'); } });
+            onOk: () => { const v2rec = { id: uid(), ts: now(), svc, kind: ikind, item: sel.name, qty: N(iqty), price: N(iprice), curr: icurr, total: N(itotal), amount: N(itotal), cost: N(iqty) * N(sel.buy), date: todayISO() }; db.other.unshift(v2rec); guardRec((d) => d.other, v2rec, 'صنف خدمة'); logAudit('إضافة', 'خدمة ' + svc + ' · ' + sel.name + ' ×' + N(iqty)); saveDB(); cloudLogTx('svcitem', svc + ' · ' + sel.name + ' ' + (ikind === 'sell' ? 'بيع' : 'شراء') + ' ×' + N(iqty), { svc, kind: ikind, item: sel.name, qty: N(iqty), date: todayISO() }); setIqty('1'); ui.toast((ikind === 'sell' ? '✅ انحفظ بيع ' : '📤 انحفظ شراء ') + sel.name + ' ×' + N(iqty) + ' — ' + mc(icurr, N(itotal)), ikind === 'sell' ? 'in' : 'out'); } });
     };
     // ---- item management ----
     const [nm, setNm] = useState(''), [buy, setBuy] = useState(''), [sell, setSell] = useState(''), [img, setImg] = useState(''), [mcur, setMcur] = useState('LBP');
@@ -3627,7 +3658,7 @@ function SupEntry({ kind }) {
                     db.supPayments = [rec, ...(db.supPayments || [])];
                 logAudit('إضافة', (kind === 'owe' ? 'علينا لمورّد' : 'تسديد لمورّد') + ' — ' + name + ' ' + money2(N(lbp), N(usd)));
                 saveDB();
-                cloudLogTx(kind === 'owe' ? 'supowe' : 'suppay', name + ' ' + money2(N(lbp), N(usd)), rec);
+                cloudLogTx(kind === 'owe' ? 'supowe' : 'suppay', name + ' ' + money2(N(lbp), N(usd)), rec); guardRec((d) => kind === 'owe' ? d.supDebts : d.supPayments, rec, 'حركة مورد');
                 setLbp('');
                 setUsd('');
                 setDesc('');
@@ -3800,7 +3831,7 @@ function CustEntry({ kind, preset }) {
                     db.payments.unshift(rec);
                 logAudit('إضافة', (kind === 'debt' ? 'دين' : 'تسديد') + ' — ' + name + ' ' + money2(N(lbp), N(usd)));
                 saveDB();
-                cloudLogTx(kind === 'debt' ? 'debt' : 'pay', name + ' ' + money2(N(lbp), N(usd)), rec);
+                cloudLogTx(kind === 'debt' ? 'debt' : 'pay', name + ' ' + money2(N(lbp), N(usd)), rec); guardRec((d) => kind === 'debt' ? d.debts : d.payments, rec, kind === 'debt' ? 'دين' : 'تسديد');
                 const amtTxt = money2(N(lbp), N(usd));
                 setLbp('');
                 setUsd('');
@@ -4004,7 +4035,7 @@ function REEntry({ kind }) {
             return ui.toast('حط مبلغ');
         ui.confirm({ title: kind === 'rev' ? 'تأكيد مدخول' : 'تأكيد مصروف', desc: (kind === 'rev' ? 'مدخول: ' : 'مصروف: ') + item, danger: kind !== 'rev',
             lines: [['البند', item], ['التصنيف', kind === 'exp' ? cat : ''], ['ليرة', N(lbp) ? fLBP(lbp) + ' ل.ل' : ''], ['دولار', N(usd) ? fUSD(usd) + ' $' : '']],
-            onOk: () => { const rec = { id: uid(), ts: now(), item, lbp: N(lbp), usd: N(usd), date: todayISO(), cat: kind === 'exp' ? cat : '' }; arr.unshift(rec); cloudLogTx(kind === 'rev' ? 'rev' : 'exp', item + ' ' + money2(N(lbp), N(usd)), rec); logAudit('إضافة', (kind === 'rev' ? 'مدخول' : 'مصروف · ' + cat) + ' — ' + item); saveDB(); setLbp(''); setUsd(''); ui.toast((kind === 'rev' ? '✅ انحفظ مدخول — ' : '📤 انحفظ مصروف — ') + item + ' ' + money2(N(lbp), N(usd)), kind === 'rev' ? 'in' : 'out'); } });
+            onOk: () => { const rec = { id: uid(), ts: now(), item, lbp: N(lbp), usd: N(usd), date: todayISO(), cat: kind === 'exp' ? cat : '' }; arr.unshift(rec); cloudLogTx(kind === 'rev' ? 'rev' : 'exp', item + ' ' + money2(N(lbp), N(usd)), rec); guardRec((d) => kind === 'rev' ? d.revenue : d.expenses, rec, kind === 'rev' ? 'مدخول' : 'مصروف'); logAudit('إضافة', (kind === 'rev' ? 'مدخول' : 'مصروف · ' + cat) + ' — ' + item); saveDB(); setLbp(''); setUsd(''); ui.toast((kind === 'rev' ? '✅ انحفظ مدخول — ' : '📤 انحفظ مصروف — ') + item + ' ' + money2(N(lbp), N(usd)), kind === 'rev' ? 'in' : 'out'); } });
     };
     const addProd = () => { const v = newp.trim(); if (!v)
         return; if (!db.products.includes(v))
@@ -4063,7 +4094,7 @@ function Invoice() {
             return ui.toast('ضيف بنود أوّلاً');
         ui.confirm({ title: 'تأكيد الفاتورة', desc: 'فاتورة #' + num + (cust ? (' — ' + cust) : ''),
             lines: [['عدد البنود', String(lines.length)], ['المجموع', fLBP(total) + ' ل.ل']],
-            onOk: () => { (() => { const rec = { id: uid(), ts: now(), number: num, cust, date: todayISO(), lines, total }; db.invoices.unshift(rec); cloudLogTx('invoice', 'فاتورة #' + num + ' — ' + fLBP(total), rec); })(); logAudit('إضافة', 'فاتورة #' + num + (cust ? ' — ' + cust : '')); saveDB(); ui.toast('🧾 انحفظت الفاتورة #' + num + ' — ' + fLBP(total) + ' ل.ل', 'gold'); setLines([]); setCust(''); setNum(invNumber()); } });
+            onOk: () => { (() => { const rec = { id: uid(), ts: now(), number: num, cust, date: todayISO(), lines, total }; db.invoices.unshift(rec); cloudLogTx('invoice', 'فاتورة #' + num + ' — ' + fLBP(total), rec); guardRec((d) => d.invoices, rec, 'فاتورة'); })(); logAudit('إضافة', 'فاتورة #' + num + (cust ? ' — ' + cust : '')); saveDB(); ui.toast('🧾 انحفظت الفاتورة #' + num + ' — ' + fLBP(total) + ' ل.ل', 'gold'); setLines([]); setCust(''); setNum(invNumber()); } });
     };
     return React.createElement("div", { className: "page" },
         React.createElement("div", { className: "card inv-head" },
