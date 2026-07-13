@@ -530,7 +530,7 @@ const { useState, useEffect, useMemo, useRef, createContext, useContext } = Reac
 const DB_KEY = 'famstore_db_v1';
 const WA_DEFAULT = 'مرحبا {name} 🌹\nهيدا كشف حسابكن لدى {shop}.\nرصيدكم عنّا: {balance}.\nيرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.';
 const BROADCAST_DEFAULT = '🎉 عرض خاص من FAM STORE!\nوصلتنا بضاعة جديدة وأسعار منيحة 📱\nمرحبا فيكن تمرقوا عـالمحل. للاستفسار: 71917163';
-const APP_VERSION = 'v24.1 · 2026-07-11 — الفحص الأعظم: أرقام عربية + حماية سعر الصرف + تسكير كل الحذوفات';
+const APP_VERSION = 'v24.2 · 2026-07-11 — إصلاح جذري: التبني بالمكان (بند المداخيل ما بيطير)';
 const DEFAULT_SERVICES = () => [{ id: 'whish', name: 'Whish', icon: '💸' }, { id: 'ipick', name: 'iPick', icon: '🎫' }, { id: 'bycel', name: 'ByCel', icon: '📶' }, { id: 'ushare', name: 'Ushare', icon: '🔗' }];
 const USERS_DEFAULT = () => [{ id: 'u_admin', username: 'DAM', password: 'DAM', role: 'admin', active: true, perms: { profit: true, items: true, settings: true, delete: true } }, { id: 'u_fam', username: 'fam', password: 'fam', role: 'cashier', active: true, perms: { profit: false, items: false, settings: false, delete: true } }];
 const blank = () => ({
@@ -839,6 +839,42 @@ function dbSig(d) { try {
 catch (e) {
     return String(Math.random());
 } }
+/* ============ التبني بالمكان: تحديث محتوى قاعدة البيانات بلا استبدال عناوينها ============
+   ليش؟ الصفحات المفتوحة ماسكة مراجع (مصفوفة المداخيل، سجل قيد التعديل...) —
+   لو استبدلنا الجسم، أي حفظ بعد مزامنة بيروح عالنسخة الميتة وبيختفي.
+   هون منحدّث نفس المصفوفات ونفس السجلات (بالid) فكل مرجع بيضل حي. */
+function adoptInPlace(target, src) {
+    if (Array.isArray(target) && Array.isArray(src)) {
+        const byId = new Map();
+        target.forEach((o) => { if (o && typeof o === 'object' && o.id)
+            byId.set(o.id, o); });
+        const next = src.map((o) => {
+            if (o && typeof o === 'object' && o.id && byId.has(o.id)) {
+                const ex = byId.get(o.id);
+                adoptInPlace(ex, o);
+                return ex;
+            }
+            return o;
+        });
+        target.length = 0;
+        next.forEach((o) => target.push(o));
+        return;
+    }
+    Object.keys(target).forEach((k) => { if (!(k in src))
+        delete target[k]; });
+    Object.keys(src).forEach((k) => {
+        const tv = target[k], sv = src[k];
+        if (Array.isArray(tv) && Array.isArray(sv)) {
+            adoptInPlace(tv, sv);
+        }
+        else if (tv && sv && typeof tv === 'object' && typeof sv === 'object' && !Array.isArray(tv) && !Array.isArray(sv)) {
+            adoptInPlace(tv, sv);
+        }
+        else {
+            target[k] = sv;
+        }
+    });
+}
 /* ============================ FIREBASE CLOUD SYNC ============================ */
 const firebaseConfig = { apiKey: "AIzaSyAVr5L81CTOX3xs5uDy5FoWdt9TQTFd_sI", authDomain: "shopbarelais.firebaseapp.com", projectId: "shopbarelais", storageBucket: "shopbarelais.firebasestorage.app", messagingSenderId: "208284024800", appId: "1:208284024800:web:cdd04143d295ed6a547585" };
 let fbDoc = null;
@@ -1010,7 +1046,7 @@ function startCloudListeners() {
                             return;
                         }
                         const merged = normalize(mergeDb(_db, remote));
-                        _db = merged;
+                        adoptInPlace(_db, merged);
                         try {
                             localStorage.setItem(DB_KEY, JSON.stringify(_db));
                         }
@@ -1202,7 +1238,7 @@ function YearCloseCard() {
                 /* ٢) أرشيف دائم عالسحابة — وما منكفي إلا إذا نجح */
                 firebase.firestore().collection('famstore').doc('archive-fy' + oldFy).set({ ...packCloud(_db), fy: oldFy, closedAt: Date.now(), closedBy: _user || '—' }).then(() => {
                     /* ٣) اعتماد السنة الجديدة ودفعها */
-                    _db = fresh;
+                    adoptInPlace(_db, fresh);
                     try {
                         localStorage.setItem(DB_KEY, JSON.stringify(_db));
                     }
@@ -5102,7 +5138,7 @@ function Settings({ onLogout, go }) {
     const importJSON = (e) => { const file = e.target.files[0]; if (!file)
         return; const r = new FileReader(); r.onload = () => { try {
         const curFy = N(_db.fy) || 1;
-        _db = normalize({ ...blank(), ...JSON.parse(r.result) });
+        adoptInPlace(_db, normalize({ ...blank(), ...JSON.parse(r.result) }));
         saveDB();
         if ((N(_db.fy) || 1) < curFy)
             ui.toast('⚠️ استوردت نسخة من سنة مالية أقدم — السحابة رح ترجّع السنة الحالية فوقها. للاطلاع عالأرشيف بس، افصل النت أولاً.', 'out');
