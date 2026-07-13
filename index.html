@@ -530,7 +530,7 @@ const { useState, useEffect, useMemo, useRef, createContext, useContext } = Reac
 const DB_KEY = 'famstore_db_v1';
 const WA_DEFAULT = 'مرحبا {name} 🌹\nهيدا كشف حسابكن لدى {shop}.\nرصيدكم عنّا: {balance}.\nيرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.';
 const BROADCAST_DEFAULT = '🎉 عرض خاص من FAM STORE!\nوصلتنا بضاعة جديدة وأسعار منيحة 📱\nمرحبا فيكن تمرقوا عـالمحل. للاستفسار: 71917163';
-const APP_VERSION = 'v24.3 · 2026-07-11 — 🛡️ حارس ذاتي: أي بند بيطير بيرجع لحالو خلال ثواني';
+const APP_VERSION = 'v25.1 · 2026-07-11 — 🎯 إصلاح الجذر: بنود المداخيل ما بتنمسح بالمزامنة';
 const DEFAULT_SERVICES = () => [{ id: 'whish', name: 'Whish', icon: '💸' }, { id: 'ipick', name: 'iPick', icon: '🎫' }, { id: 'bycel', name: 'ByCel', icon: '📶' }, { id: 'ushare', name: 'Ushare', icon: '🔗' }];
 const USERS_DEFAULT = () => [{ id: 'u_admin', username: 'DAM', password: 'DAM', role: 'admin', active: true, perms: { profit: true, items: true, settings: true, delete: true } }, { id: 'u_fam', username: 'fam', password: 'fam', role: 'cashier', active: true, perms: { profit: false, items: false, settings: false, delete: true } }];
 const blank = () => ({
@@ -823,8 +823,10 @@ function mergeDb(a, b) {
             m.set(r.id, r); });
         return Array.from(m.values()).filter((r) => !tombs[r.id]).sort((p, q) => N(q.ts) - N(p.ts));
     };
-    const LISTS = ['omt', 'omtAdj', 'omtExch', 'omtcus', 'other', 'debts', 'payments', 'customers', 'suppliers', 'supDebts', 'supPayments', 'revenue', 'expenses', 'products', 'invoices', 'contacts', 'closings', 'rates', 'services', 'users'];
+    const LISTS = ['omt', 'omtAdj', 'omtExch', 'omtcus', 'other', 'debts', 'payments', 'customers', 'suppliers', 'supDebts', 'supPayments', 'revenue', 'expenses', 'invoices', 'contacts', 'closings', 'rates', 'services', 'users'];
     LISTS.forEach((k) => { out[k] = M(a && a[k], b && b[k]); });
+    /* بنود المداخيل: نصوص بلا أرقام — دمجها اتحاد مجموعات، مش عبر M() يلي بيمسحها */
+    out.products = Array.from(new Set([].concat((a && a.products) || [], (b && b.products) || [])));
     out.audit = M(a && a.audit, b && b.audit).slice(0, 300);
     out.rates = (out.rates || []).slice(0, 200);
     ['acc', 'mob', 'rec'].forEach((k) => {
@@ -970,7 +972,7 @@ function pushFirebase() { if (!fbDoc)
     _pushAgain = true;
     return;
 } _pushInFlight = true; setSync('syncing'); try {
-    fbDoc.set({ ...packCloud(_db), _rev: _db._rev || 0, ts: Date.now() }).then(() => { _pushInFlight = false; setSync('synced'); if (_pushAgain) {
+    fbDoc.set({ ...packCloud(_db), _rev: _db._rev || 0, ts: Date.now(), appv: APP_VERSION }).then(() => { _pushInFlight = false; setSync('synced'); if (_pushAgain) {
         _pushAgain = false;
         setTimeout(pushFirebase, 400);
     } }).catch((e) => { _pushInFlight = false; _pushAgain = false; setSync((e && (e.code === 'permission-denied' || String(e.message || '').indexOf('permission') >= 0)) ? 'auth' : 'off'); });
@@ -1024,6 +1026,9 @@ function initFirebase() {
 }
 let cloudUser = null;
 const authSubs = new Set();
+let remoteAppv = '';
+const verSubs = new Set();
+function useRemoteAppv() { const [v, setV] = useState(remoteAppv); useEffect(() => { const f = (x) => setV(x); verSubs.add(f); return () => { verSubs.delete(f); }; }, []); return v; }
 function useCloudUser() { const [u, setU] = useState(cloudUser); useEffect(() => { const f = (x) => setU(x); authSubs.add(f); return () => { authSubs.delete(f); }; }, []); return u; }
 function fbSignIn(email, pass) { return firebase.auth().signInWithEmailAndPassword(String(email || '').trim(), String(pass || '')); }
 function fbSignOut() { try {
@@ -1059,6 +1064,21 @@ function startCloudListeners() {
             if (snap.metadata && snap.metadata.hasPendingWrites)
                 return;
             const d = snap.data() || {};
+            /* مصافحة النسخ: إذا آخر من كتب عالسحابة نسختو مختلفة — نبّه بصوت عالي */
+            if (d.appv && d.appv !== APP_VERSION) {
+                remoteAppv = d.appv;
+                verSubs.forEach((f) => { try {
+                    f(remoteAppv);
+                }
+                catch (e2) { } });
+            }
+            else if (d.appv) {
+                remoteAppv = '';
+                verSubs.forEach((f) => { try {
+                    f('');
+                }
+                catch (e2) { } });
+            }
             if (d.cz || d.json) {
                 try {
                     let remoteStr = null;
@@ -1430,9 +1450,11 @@ function CloudAccountCard() {
 function SyncDot() {
     const ui = useUI();
     const [st, setSt] = useState(syncState);
+    const rv = useRemoteAppv();
     useEffect(() => { const f = (x) => setSt(x); syncSubs.add(f); return () => { syncSubs.delete(f); }; }, []);
-    const color = st === 'synced' ? '#16a34a' : st === 'syncing' ? '#f59e0b' : st === 'auth' ? '#e05252' : '#cbd5e1';
-    const lbl = st === 'synced' ? 'متزامن مع السحابة' : st === 'syncing' ? 'عم يتزامن' : st === 'auth' ? '🔒 بدو ربط حساب السحابة — من الإعدادات' : 'غير متزامن — تأكد من النت';
+    const verClash = !!rv;
+    const color = verClash ? '#dc2626' : st === 'synced' ? '#16a34a' : st === 'syncing' ? '#f59e0b' : st === 'auth' ? '#e05252' : '#cbd5e1';
+    const lbl = verClash ? ('⚠️ نسخ مختلفة! هالجهاز: ' + APP_VERSION.split(' ')[0] + ' — بالسحابة: ' + String(rv).split(' ')[0] + ' — وحّدوا النسخ فوراً (Ctrl+Shift+R)') : st === 'synced' ? 'متزامن مع السحابة' : st === 'syncing' ? 'عم يتزامن' : st === 'auth' ? '🔒 بدو ربط حساب السحابة — من الإعدادات' : 'غير متزامن — تأكد من النت';
     return React.createElement("button", { className: "sync-dot", title: lbl, onClick: () => { ui.toast(lbl); if (st !== 'synced')
             pushFirebase(); } },
         React.createElement("span", { className: "sd-c", style: { background: color, boxShadow: st === 'syncing' ? '0 0 0 3px rgba(245,158,11,.25)' : 'none' } }));
