@@ -548,7 +548,7 @@ const blank = () => ({
 function normalize(db) {
     ['acc', 'mob', 'rec'].forEach(k => {
         db[k] = db[k] || { items: [], sales: [], purchases: [] };
-        db[k].items = (db[k].items || []).map((it) => typeof it === 'string' ? { id: uid(), name: it, cat: '', img: '' } : { id: it.id || uid(), name: it.name, cat: it.cat || '', img: it.img || '' });
+        db[k].items = (db[k].items || []).map((it) => typeof it === 'string' ? { id: uid(), name: it, cat: '', img: '', code: '', buy: 0, sell: 0, pcurr: 'LBP' } : { id: it.id || uid(), name: it.name, cat: it.cat || '', img: it.img || '', code: it.code || '', buy: N(it.buy) || 0, sell: N(it.sell) || 0, pcurr: it.pcurr || 'LBP' });
     });
     if (!db.services || !db.services.length)
         db.services = DEFAULT_SERVICES();
@@ -1545,6 +1545,16 @@ function waOpen(phone, text) {
     }
 }
 /* تفصيل الرصيد لكل عملة على حدة: 9,050,000 ل.ل (لنا) · 20.00 $ (لكم) */
+function waBalFix(msg, balL, balU) {
+    const l = N(balL), u = N(balU);
+    const owedToCust = (l <= 0 && u <= 0 && (l < 0 || u < 0));
+    const settled = !l && !u;
+    if (owedToCust)
+        return msg.replace('يرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.', 'المبلغ إلكن عنّا 🌹 بتقدروا تستلموه بأي وقت، وشكراً لتعاملكن معنا.').replace('يرجى التسديد عند الإمكان', 'المبلغ إلكن عنّا — بتقدروا تستلموه بأي وقت').replace('رصيدكم عنّا:', 'الرصيد إلكن عنّا:');
+    if (settled)
+        return msg.replace('يرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.', 'حسابكم مسدّد بالكامل ✓ شكراً لتعاملكن معنا.').replace('يرجى التسديد عند الإمكان', 'حسابكم مسدّد بالكامل ✓');
+    return msg;
+}
 function balParts(l, u) {
     const p = [];
     if (N(l) > 0)
@@ -2726,6 +2736,7 @@ function InvEntry({ storeKey, kind }) {
     const cur = rows.find((r) => r.name === item);
     const stockNow = cur ? cur.stock : 0;
     const stockAfter = kind === 'sell' ? stockNow - q : stockNow + q;
+    const pickItem = (nmv) => { setItem(nmv); const it = (store.items || []).find((x) => x.name === nmv); const pv = it ? (kind === 'sell' ? N(it.sell) : N(it.buy)) : 0; if (pv > 0) { setPrice(String(pv)); if (it.pcurr) setCurr(it.pcurr); } };
     const submit = () => {
         if (!item)
             return ui.toast('اختر الصنف');
@@ -2753,7 +2764,7 @@ function InvEntry({ storeKey, kind }) {
                             const v = e.target.value.trim();
                             const it = (store.items || []).find((x) => x.code && String(x.code) === v);
                             if (it) {
-                                setItem(it.name);
+                                pickItem(it.name);
                                 ui.toast('تم: ' + it.name);
                             }
                             else if (v)
@@ -2762,13 +2773,13 @@ function InvEntry({ storeKey, kind }) {
                         } } }),
                     React.createElement("button", { type: "button", className: "scan-cam-btn", onClick: () => setScanOpen(true) }, "\uD83D\uDCF7"))),
             scanOpen && React.createElement(BarcodeScanner, { onScan: (code) => { setScanOpen(false); const v = String(code).trim(); const it = (store.items || []).find((x) => x.code && String(x.code) === v); if (it) {
-                    setItem(it.name);
+                    pickItem(it.name);
                     ui.toast('✓ ' + it.name);
                 }
                 else
                     ui.toast('ما لقيت صنف بهالباركود: ' + v); }, close: () => setScanOpen(false) }),
             React.createElement(Field, { label: "\u0627\u0644\u0635\u0646\u0641" },
-                React.createElement("select", { value: item, onChange: (e) => setItem(e.target.value) },
+                React.createElement("select", { value: item, onChange: (e) => pickItem(e.target.value) },
                     React.createElement("option", { value: "" }, "\u2014 \u0627\u062E\u062A\u0631 \u0627\u0644\u0635\u0646\u0641 \u2014"),
                     Array.from(new Set((store.items || []).map((it) => it.cat || ''))).map((c) => React.createElement("optgroup", { key: c || '_', label: c || 'بدون فئة' }, (store.items || []).filter((it) => (it.cat || '') === c).map((it) => React.createElement("option", { key: it.id, value: it.name }, it.name)))))),
             item && React.createElement("div", { className: "stock-now" },
@@ -2858,6 +2869,7 @@ function InvItems({ storeKey }) {
     const ui = useUI();
     const store = db[storeKey];
     const [nm, setNm] = useState(''), [cat, setCat] = useState(''), [img, setImg] = useState(''), [code, setCode] = useState(''), [codeScan, setCodeScan] = useState(false);
+    const [buy, setBuy] = useState(''), [sell, setSell] = useState(''), [pcurr, setPcurr] = useState('LBP');
     const [sheet, setSheet] = useState(null);
     const cats = Array.from(new Set(store.items.map((it) => it.cat || ''))).filter(Boolean);
     const add = () => {
@@ -2866,12 +2878,14 @@ function InvItems({ storeKey }) {
             return ui.toast('اكتب اسم الصنف');
         if (store.items.some((it) => it.name === v))
             return ui.toast('الصنف موجود');
-        store.items.push({ id: uid(), name: v, cat: cat.trim(), code: code.trim(), img });
+        store.items.push({ id: uid(), name: v, cat: cat.trim(), code: code.trim(), img, buy: N(buy) || 0, sell: N(sell) || 0, pcurr });
         logAudit('إضافة', 'صنف جديد — ' + v);
         saveDB();
         setNm('');
         setImg('');
         setCode('');
+        setBuy('');
+        setSell('');
         ui.toast('انضاف الصنف ✓');
     };
     const pickImg = (e) => { const f = e.target.files[0]; if (f)
@@ -2882,6 +2896,13 @@ function InvItems({ storeKey }) {
         React.createElement("div", { className: "card" },
             React.createElement(Field, { label: "\u0627\u0633\u0645 \u0627\u0644\u0635\u0646\u0641" },
                 React.createElement("input", { value: nm, onChange: (e) => setNm(e.target.value), placeholder: "\u0645\u062B\u0627\u0644: Glass Protection" })),
+            React.createElement(Field, { label: "أسعار الصنف (اختياري — بتظهر تلقائيًا بالشراء والبيع)" },
+                React.createElement("div", { className: "three" },
+                    React.createElement("input", { value: buy, inputMode: "decimal", placeholder: "سعر الشراء", onChange: (e) => setBuy(e.target.value) }),
+                    React.createElement("input", { value: sell, inputMode: "decimal", placeholder: "سعر البيع", onChange: (e) => setSell(e.target.value) }),
+                    React.createElement("select", { value: pcurr, onChange: (e) => setPcurr(e.target.value) },
+                        React.createElement("option", { value: "LBP" }, "ل.ل"),
+                        React.createElement("option", { value: "USD" }, "$")))),
             React.createElement(Field, { label: "\u0628\u0627\u0631\u0643\u0648\u062F (\u0627\u062E\u062A\u064A\u0627\u0631\u064A)" },
                 React.createElement("div", { className: "scan-row" },
                     React.createElement("input", { className: "scan-input", value: code, onChange: (e) => setCode(e.target.value), placeholder: "\u0627\u0645\u0633\u062D \u0623\u0648 \u0627\u0643\u062A\u0628 \u0627\u0644\u0628\u0627\u0631\u0643\u0648\u062F", autoCapitalize: "off" }),
@@ -2910,6 +2931,7 @@ function InvItems({ storeKey }) {
 function ItemSheet({ store, item, close }) {
     const ui = useUI();
     const [nm, setNm] = useState(item.name), [cat, setCat] = useState(item.cat || ''), [img, setImg] = useState(item.img || '');
+    const [buy, setBuy] = useState(item.buy || ''), [sell, setSell] = useState(item.sell || ''), [pcurr, setPcurr] = useState(item.pcurr || 'LBP');
     const cats = Array.from(new Set(store.items.map((it) => it.cat || ''))).filter(Boolean);
     const pickImg = (e) => { const f = e.target.files[0]; if (f)
         readImage(f, (d) => setImg(d)); };
@@ -2923,6 +2945,9 @@ function ItemSheet({ store, item, close }) {
         item.name = v;
         item.cat = cat.trim();
         item.img = img;
+        item.buy = N(buy) || 0;
+        item.sell = N(sell) || 0;
+        item.pcurr = pcurr;
         if (oldName !== v) {
             ['sales', 'purchases'].forEach(kk => store[kk].forEach((r) => { if (r.item === oldName)
                 r.item = v; }));
@@ -2931,7 +2956,7 @@ function ItemSheet({ store, item, close }) {
         ui.toast('انحفظ ✓');
         close();
     };
-    const del = () => { const p = prompt('كلمة سر الحذف:'); if (checkDelPass(db, p)) {
+    const del = () => { const p = prompt('كلمة سر الحذف:'); if (checkDelPass(_db, p)) {
         (tomb(item.id), store.items = store.items.filter((x) => x.id !== item.id));
         saveDB();
         ui.toast('انحذف الصنف');
@@ -2945,6 +2970,13 @@ function ItemSheet({ store, item, close }) {
         React.createElement(Field, { label: "\u0627\u0644\u0641\u0626\u0629" },
             React.createElement("input", { value: cat, onChange: (e) => setCat(e.target.value), list: "cats-edit" }),
             React.createElement("datalist", { id: "cats-edit" }, cats.map((c) => React.createElement("option", { key: c, value: c })))),
+        React.createElement(Field, { label: "أسعار الصنف (شراء / بيع)" },
+            React.createElement("div", { className: "three" },
+                React.createElement("input", { value: buy, inputMode: "decimal", placeholder: "سعر الشراء", onChange: (e) => setBuy(e.target.value) }),
+                React.createElement("input", { value: sell, inputMode: "decimal", placeholder: "سعر البيع", onChange: (e) => setSell(e.target.value) }),
+                React.createElement("select", { value: pcurr, onChange: (e) => setPcurr(e.target.value) },
+                    React.createElement("option", { value: "LBP" }, "ل.ل"),
+                    React.createElement("option", { value: "USD" }, "$")))),
         React.createElement(Field, { label: "\u0627\u0644\u0635\u0648\u0631\u0629" },
             React.createElement("div", { className: "img-pick" },
                 resolveImg(img) ? React.createElement("img", { src: resolveImg(img), className: "img-prev" }) : React.createElement("div", { className: "img-ph" }, "\uD83D\uDCF7"),
@@ -3751,7 +3783,7 @@ function Customers({ openCust }) {
     const lnaL = rows.reduce((s, r) => s + Math.max(0, r.balL), 0), lnaU = rows.reduce((s, r) => s + Math.max(0, r.balU), 0);
     const alaL = rows.reduce((s, r) => s + Math.max(0, -r.balL), 0), alaU = rows.reduce((s, r) => s + Math.max(0, -r.balU), 0);
     const sendReminder = (r) => { if (!r.phone)
-        return ui.toast('ما في رقم لهالزبون'); const msg = (db.settings.waTemplate || WA_DEFAULT).replace(/\{name\}/g, r.name).replace(/\{shop\}/g, db.settings.name).replace(/\{balance\}/g, balText(r.balL, r.balU) || 'لا يوجد'); waOpen(r.phone, msg); ui.toast('عم يفتح واتساب…'); };
+        return ui.toast('ما في رقم لهالزبون'); const msg = waBalFix((db.settings.waTemplate || WA_DEFAULT).replace(/\{name\}/g, r.name).replace(/\{shop\}/g, db.settings.name).replace(/\{balance\}/g, balText(r.balL, r.balU) || 'لا يوجد'), r.balL, r.balU); waOpen(r.phone, msg); ui.toast('عم يفتح واتساب…'); };
     const flt = rows.filter((r) => !q || (r.name || '').includes(q) || (r.phone || '').includes(q));
     const printAll = () => {
         const head = printHeader(db, 'كشف ذمم الزبائن', 'بتاريخ ' + fDate(todayISO()));
@@ -3935,7 +3967,7 @@ function CustStatement({ cust, back }) {
     const ui = useUI();
     const { ev, tot } = custLedger(db, cust.name);
     const balStr = (tot.balL || tot.balU) ? balParts(tot.balL, tot.balU) : 'لا يوجد رصيد مستحق';
-    const tmpl = (db.settings.waTemplate || WA_DEFAULT).replace(/\{name\}/g, cust.name).replace(/\{shop\}/g, db.settings.name).replace(/\{balance\}/g, balStr);
+    const tmpl = waBalFix((db.settings.waTemplate || WA_DEFAULT).replace(/\{name\}/g, cust.name).replace(/\{shop\}/g, db.settings.name).replace(/\{balance\}/g, balStr), tot.balL, tot.balU);
     const [msg, setMsg] = useState(tmpl);
     const sendWA = () => { waOpen(cust.phone, msg); ui.toast('عم يفتح واتساب…'); };
     const printStmt = () => {
