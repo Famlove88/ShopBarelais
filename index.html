@@ -513,6 +513,9 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .welcome .w-role{font-size:12px;color:var(--brand-2);font-weight:700}
 .welcome .w-date{font-size:11.5px;color:var(--muted);text-align:left;font-weight:700;flex-shrink:0;max-width:96px;line-height:1.35}
 
+.price-ref{display:flex;gap:10px;flex-wrap:wrap;align-items:center;background:var(--surface-2);border:1px dashed var(--line);border-radius:12px;padding:8px 12px;margin:2px 0 10px;font-size:13.5px;font-weight:800}
+.price-ref .pr-b{color:#b45309}
+.price-ref .pr-s{color:var(--brand-2)}
 </style>
 </head>
 <body>
@@ -1549,11 +1552,18 @@ function waBalFix(msg, balL, balU) {
     const l = N(balL), u = N(balU);
     const owedToCust = (l <= 0 && u <= 0 && (l < 0 || u < 0));
     const settled = !l && !u;
+    if (!owedToCust && !settled)
+        return msg;
+    const payReq = /(تسديد|التسديد|سداد|السداد|تسدّد)/;
+    const already = /(مسدّد|مسدد)/;
+    let out = String(msg).split('\n').map((ln) => {
+        if (payReq.test(ln) && !already.test(ln))
+            return owedToCust ? 'المبلغ إلكم عنّا 🌹 وبتقدروا تستلموه بأي وقت يناسبكم.' : 'حسابكم مسدّد بالكامل ✓ شكراً لتعاملكم معنا.';
+        return ln;
+    }).join('\n');
     if (owedToCust)
-        return msg.replace('يرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.', 'المبلغ إلكن عنّا 🌹 بتقدروا تستلموه بأي وقت، وشكراً لتعاملكن معنا.').replace('يرجى التسديد عند الإمكان', 'المبلغ إلكن عنّا — بتقدروا تستلموه بأي وقت').replace('رصيدكم عنّا:', 'الرصيد إلكن عنّا:');
-    if (settled)
-        return msg.replace('يرجى التسديد عند الإمكان، وشكراً لتعاملكن معنا.', 'حسابكم مسدّد بالكامل ✓ شكراً لتعاملكن معنا.').replace('يرجى التسديد عند الإمكان', 'حسابكم مسدّد بالكامل ✓');
-    return msg;
+        out = out.replace('رصيدكم عنّا:', 'الرصيد إلكم عنّا:').replace('بأن لديكم رصيداً مستحقاً لدى', 'بأن لكم رصيداً عندنا لدى').replace('لديكم رصيداً مستحقاً لدى', 'لكم رصيداً عندنا لدى').replace('لديكم رصيد مستحق لدى', 'لكم رصيد عندنا لدى');
+    return out;
 }
 function balParts(l, u) {
     const p = [];
@@ -2736,7 +2746,7 @@ function InvEntry({ storeKey, kind }) {
     const cur = rows.find((r) => r.name === item);
     const stockNow = cur ? cur.stock : 0;
     const stockAfter = kind === 'sell' ? stockNow - q : stockNow + q;
-    const pickItem = (nmv) => { setItem(nmv); const it = (store.items || []).find((x) => x.name === nmv); const pv = it ? (kind === 'sell' ? N(it.sell) : N(it.buy)) : 0; if (pv > 0) { setPrice(String(pv)); if (it.pcurr) setCurr(it.pcurr); } };
+    const pickItem = (nmv) => { setItem(nmv); const it = (store.items || []).find((x) => x.name === nmv); const pv = it ? (kind === 'sell' ? N(it.sell) : N(it.buy)) : 0; setPrice(pv > 0 ? String(pv) : ''); if (pv > 0 && it.pcurr) setCurr(it.pcurr); };
     const submit = () => {
         if (!item)
             return ui.toast('اختر الصنف');
@@ -2782,6 +2792,9 @@ function InvEntry({ storeKey, kind }) {
                 React.createElement("select", { value: item, onChange: (e) => pickItem(e.target.value) },
                     React.createElement("option", { value: "" }, "\u2014 \u0627\u062E\u062A\u0631 \u0627\u0644\u0635\u0646\u0641 \u2014"),
                     Array.from(new Set((store.items || []).map((it) => it.cat || ''))).map((c) => React.createElement("optgroup", { key: c || '_', label: c || 'بدون فئة' }, (store.items || []).filter((it) => (it.cat || '') === c).map((it) => React.createElement("option", { key: it.id, value: it.name }, it.name)))))),
+            (() => { if (!item) return null; const _pi = (store.items || []).find((x) => x.name === item); if (!_pi || (!N(_pi.buy) && !N(_pi.sell))) return null; const _pc = _pi.pcurr || 'LBP'; return React.createElement("div", { className: "price-ref" },
+                React.createElement("span", { className: "pr-b" }, "\ud83d\udcb0 \u0627\u0644\u0643\u0644\u0641\u0629: " + (N(_pi.buy) ? mc(_pc, N(_pi.buy)) : '\u2014')),
+                React.createElement("span", { className: "pr-s" }, "\ud83c\udff7\ufe0f \u0633\u0639\u0631 \u0627\u0644\u0628\u064a\u0639: " + (N(_pi.sell) ? mc(_pc, N(_pi.sell)) : '\u2014'))); })(),
             item && React.createElement("div", { className: "stock-now" },
                 cur && resolveImg(cur.img) ? React.createElement("img", { src: resolveImg(cur.img), className: "stock-thumb" }) : null,
                 "\u0627\u0644\u0645\u062E\u0632\u0648\u0646 \u0627\u0644\u062D\u0627\u0644\u064A: ",
