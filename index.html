@@ -516,6 +516,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .price-ref{display:flex;gap:10px;flex-wrap:wrap;align-items:center;background:var(--surface-2);border:1px dashed var(--line);border-radius:12px;padding:8px 12px;margin:2px 0 10px;font-size:13.5px;font-weight:800}
 .price-ref .pr-b{color:#b45309}
 .price-ref .pr-s{color:var(--brand-2)}
+.stat .v2{font-size:13px;font-weight:800;margin-top:2px;opacity:.95}
 </style>
 </head>
 <body>
@@ -4078,12 +4079,15 @@ function RevExp() {
         React.createElement("div", { className: "stats" },
             React.createElement("div", { className: "stat" },
                 React.createElement("div", { className: "v pos num" }, fLBP(re.revL)),
-                React.createElement("div", { className: "k" }, "\u0645\u062F\u0627\u062E\u064A\u0644 \u0644.\u0644")),
+                React.createElement("div", { className: "v2 pos num" }, fUSD(re.revU) + " $"),
+                React.createElement("div", { className: "k" }, "\u0645\u062F\u0627\u062E\u064A\u0644 \u0644.\u0644 \u00b7 $")),
             React.createElement("div", { className: "stat" },
                 React.createElement("div", { className: "v neg num" }, fLBP(re.expL)),
-                React.createElement("div", { className: "k" }, "\u0645\u0635\u0627\u0631\u064A\u0641 \u0644.\u0644")),
+                React.createElement("div", { className: "v2 neg num" }, fUSD(re.expU) + " $"),
+                React.createElement("div", { className: "k" }, "\u0645\u0635\u0627\u0631\u064A\u0641 \u0644.\u0644 \u00b7 $")),
             React.createElement("div", { className: "stat" },
                 React.createElement("div", { className: 'v num ' + (re.netL >= 0 ? 'pos' : 'neg') }, fLBP(re.netL)),
+                React.createElement("div", { className: 'v2 num ' + (re.netU >= 0 ? 'pos' : 'neg') }, fUSD(re.netU) + " $"),
                 React.createElement("div", { className: "k" }, "\u0627\u0644\u0635\u0627\u0641\u064A"))),
         React.createElement("div", { className: "tabs" },
             React.createElement("button", { className: tab === 'rev' ? 'active' : '', onClick: () => setTab('rev') }, "\u0645\u062F\u062E\u0648\u0644"),
@@ -4700,7 +4704,7 @@ function Reports() {
     }, [preset]);
     const inR = (d) => { const x = String(d || '').slice(0, 10); return x >= from && x <= to; };
     const toL = (c, v) => c === 'USD' ? N(v) * rate : N(v);
-    let saleL = 0, costL = 0, svcSell = 0, svcBuy = 0, debtL = 0, debtU = 0, payL = 0, payU = 0, revL = 0, expL = 0, oInL = 0, oInU = 0, oOutL = 0, oOutU = 0, nSale = 0;
+    let saleL = 0, costL = 0, svcSell = 0, svcBuy = 0, debtL = 0, debtU = 0, payL = 0, payU = 0, revL = 0, expL = 0, revLL = 0, revUu = 0, expLL = 0, expUu = 0, oInL = 0, oInU = 0, oOutL = 0, oOutU = 0, nSale = 0;
     ['acc', 'mob', 'rec'].forEach((k) => { db[k].sales.filter((x) => inR(x.date)).forEach((x) => { saleL += toL(x.curr, x.total); nSale++; }); db[k].purchases.filter((x) => inR(x.date)).forEach((x) => { costL += toL(x.curr, x.total); }); });
     db.omt.filter((x) => inR(x.date)).forEach((x) => { if (x.dir === 'IN') {
         oInL += N(x.lbp);
@@ -4716,8 +4720,8 @@ function Reports() {
         svcBuy += toL(x.curr, x.amount); });
     db.debts.filter((x) => inR(x.date)).forEach((x) => { debtL += N(x.lbp); debtU += N(x.usd); });
     db.payments.filter((x) => inR(x.date)).forEach((x) => { payL += N(x.lbp); payU += N(x.usd); });
-    db.revenue.filter((x) => inR(x.date)).forEach((x) => { revL += N(x.lbp) + N(x.usd) * rate; });
-    db.expenses.filter((x) => inR(x.date)).forEach((x) => { expL += N(x.lbp) + N(x.usd) * rate; });
+    db.revenue.filter((x) => inR(x.date)).forEach((x) => { revL += N(x.lbp) + N(x.usd) * rate; revLL += N(x.lbp); revUu += N(x.usd); });
+    db.expenses.filter((x) => inR(x.date)).forEach((x) => { expL += N(x.lbp) + N(x.usd) * rate; expLL += N(x.lbp); expUu += N(x.usd); });
     const expCats = {};
     db.expenses.filter((x) => inR(x.date)).forEach((x) => { const v = N(x.lbp) + N(x.usd) * rate; const c = x.cat || 'غيره'; expCats[c] = (expCats[c] || 0) + v; });
     const expBreak = Object.entries(expCats).sort((a, b) => b[1] - a[1]);
@@ -4746,7 +4750,7 @@ function Reports() {
             rows += row('إجمالي المشتريات', fLBP(costL) + ' ل.ل') + row('الربح التقريبي', fLBP(profit) + ' ل.ل');
         if (showP)
             rows += row('الربح الدقيق (بعد كلفة البضاعة المباعة)', fLBP(rp.cogsProfit) + ' ل.ل · ' + fUSD(rp.cogsProfit / rate) + ' $') + row('ربح أصناف الخدمات', fLBP(rp.svcItemP) + ' ل.ل · ' + fUSD(rp.svcItemP / rate) + ' $') + row('ربح الصرافة (تقريبي)', fLBP(rp.exchP) + ' ل.ل · ' + fUSD(rp.exchP / rate) + ' $');
-        rows += row('OMT دخل', fLBP(oInL) + ' ل.ل · ' + fUSD(oInU) + '$') + row('OMT طلع', fLBP(oOutL) + ' ل.ل · ' + fUSD(oOutU) + '$') + row('خدمات بيع', fLBP(svcSell) + ' ل.ل') + row('خدمات شراء', fLBP(svcBuy) + ' ل.ل') + row('ديون أُعطيت', fLBP(debtL) + ' ل.ل · ' + fUSD(debtU) + '$') + row('تسديدات', fLBP(payL) + ' ل.ل · ' + fUSD(payU) + '$') + row('مداخيل', fLBP(revL) + ' ل.ل') + row('مصاريف', fLBP(expL) + ' ل.ل') + row('دفعات موردين', fLBP(supPayRL) + ' ل.ل · ' + fUSD(supPayRU) + '$') + row('صافي حركة الكاش', fLBP(netCash) + ' ل.ل');
+        rows += row('OMT دخل', fLBP(oInL) + ' ل.ل · ' + fUSD(oInU) + '$') + row('OMT طلع', fLBP(oOutL) + ' ل.ل · ' + fUSD(oOutU) + '$') + row('خدمات بيع', fLBP(svcSell) + ' ل.ل') + row('خدمات شراء', fLBP(svcBuy) + ' ل.ل') + row('ديون أُعطيت', fLBP(debtL) + ' ل.ل · ' + fUSD(debtU) + '$') + row('تسديدات', fLBP(payL) + ' ل.ل · ' + fUSD(payU) + '$') + row('مداخيل', fLBP(revLL) + ' ل.ل · ' + fUSD(revUu) + ' $') + row('مصاريف', fLBP(expLL) + ' ل.ل · ' + fUSD(expUu) + ' $') + row('دفعات موردين', fLBP(supPayRL) + ' ل.ل · ' + fUSD(supPayRU) + '$') + row('صافي حركة الكاش', fLBP(netCash) + ' ل.ل');
         if (showP)
             rows += '<tr><td style="padding:8px;border-top:2px solid #0b6e4f;font-weight:900">صافي ربح الفترة</td><td style="padding:8px;border-top:2px solid #0b6e4f;text-align:left;font-weight:900;color:#0b6e4f">' + fLBP(netP2) + ' ل.ل · ≈ ' + fUSD(netP2 / rate) + ' $</td></tr>';
         ui.print({ title: 'تقرير الفترة', html: '<div style="font-family:Cairo,Tahoma,sans-serif;direction:rtl;padding:22px;color:#1a1a1a">' + head + '<table style="width:100%;border-collapse:collapse;font-size:13px">' + rows + '</table></div>' });
@@ -4804,8 +4808,8 @@ function Reports() {
             React.createElement("div", { className: "sec-h tight" },
                 React.createElement("div", { className: "bar" }),
                 React.createElement("h2", null, "\u0645\u062F\u0627\u062E\u064A\u0644 \u0648\u0645\u0635\u0627\u0631\u064A\u0641")),
-            kv('مداخيل', fLBP(revL) + ' ل.ل', 'pos'),
-            kv('مصاريف', fLBP(expL) + ' ل.ل', 'neg')),
+            kv('مداخيل', fLBP(revLL) + ' ل.ل · ' + fUSD(revUu) + ' $', 'pos'),
+            kv('مصاريف', fLBP(expLL) + ' ل.ل · ' + fUSD(expUu) + ' $', 'neg')),
         expBreak.length > 0 && React.createElement("div", { className: "card" },
             React.createElement("div", { className: "sec-h tight" },
                 React.createElement("div", { className: "bar" }),
